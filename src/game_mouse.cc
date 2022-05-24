@@ -831,6 +831,22 @@ void gameMouseRefresh()
     }
 }
 
+bool gameMouseClickOnInterfaceBar()
+{
+    Rect interfaceBarWindowRect;
+    windowGetRect(gInterfaceBarWindow, &interfaceBarWindowRect);
+
+    int interfaceBarWindowRectLeft = 0;
+    int interfaceBarWindowRectRight = _scr_size.right;
+
+    if (gInterfaceBarMode) {
+        interfaceBarWindowRectLeft = interfaceBarWindowRect.left;
+        interfaceBarWindowRectRight = interfaceBarWindowRect.right;
+    }
+
+    return _mouse_click_in(interfaceBarWindowRectLeft, interfaceBarWindowRect.top, interfaceBarWindowRectRight, interfaceBarWindowRect.bottom);
+}
+
 // 0x44BFA8
 void _gmouse_handle_event(int mouseX, int mouseY, int mouseState)
 {
@@ -852,8 +868,7 @@ void _gmouse_handle_event(int mouseX, int mouseY, int mouseState)
         }
     }
 
-    // TODO: allow clicking to the left and right of the INTERFACE_BAR if gInterfaceBarMode is enabled
-    if (!_mouse_click_in(0, 0, _scr_size.right - _scr_size.left, _scr_size.bottom - _scr_size.top - INTERFACE_BAR_HEIGHT)) {
+    if (gameMouseClickOnInterfaceBar()) {
         return;
     }
 
@@ -2170,7 +2185,7 @@ int _gmouse_3d_move_to(int x, int y, int elevation, Rect* a4)
 
     int fid = gGameMouseBouncingCursor->fid;
     if ((fid & 0xF000000) >> 24 == OBJ_TYPE_TILE) {
-        int squareTile = _square_num(x, y, elevation);
+        int squareTile = squareTileFromScreenXY(x, y, elevation);
         if (squareTile == -1) {
             tile = HEX_GRID_WIDTH * (2 * (squareTile / SQUARE_GRID_WIDTH) + 1) + 2 * (squareTile % SQUARE_GRID_WIDTH) + 1;
             x1 = -8;
@@ -2179,7 +2194,7 @@ int _gmouse_3d_move_to(int x, int y, int elevation, Rect* a4)
             char* executable;
             configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_EXECUTABLE_KEY, &executable);
             if (stricmp(executable, "mapper") == 0) {
-                if (_tile_roof_visible()) {
+                if (tileRoofIsVisible()) {
                     if ((gDude->flags & OBJECT_HIDDEN) == 0) {
                         y1 = -83;
                     }
