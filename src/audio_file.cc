@@ -2,15 +2,12 @@
 
 #include "debug.h"
 #include "memory_manager.h"
+#include "platform_compat.h"
 #include "sound.h"
 
 #include <assert.h>
-#include <io.h>
 #include <stdio.h>
 #include <string.h>
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 // 0x5108C0
 AudioFileIsCompressedProc* _queryCompressedFunc_2 = _defaultCompressionFunc__;
@@ -41,7 +38,7 @@ int audioFileSoundDecoderReadHandler(int fileHandle, void* buffer, unsigned int 
 // 0x41A88C
 int audioFileOpen(const char* fname, int flags, ...)
 {
-    char path[MAX_PATH];
+    char path[COMPAT_MAX_PATH];
     strcpy(path, fname);
 
     int compression;
@@ -102,7 +99,7 @@ int audioFileOpen(const char* fname, int flags, ...)
         audioFile->soundDecoder = soundDecoderInit(audioFileSoundDecoderReadHandler, audioFile->fileHandle, &(audioFile->field_14), &(audioFile->field_10), &(audioFile->fileSize));
         audioFile->fileSize *= 2;
     } else {
-        audioFile->fileSize = filelength(fileno(stream));
+        audioFile->fileSize = compat_filelength(fileno(stream));
     }
 
     audioFile->position = 0;

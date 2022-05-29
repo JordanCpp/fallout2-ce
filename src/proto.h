@@ -5,12 +5,10 @@
 #include "message.h"
 #include "obj_types.h"
 #include "perk_defs.h"
+#include "platform_compat.h"
 #include "proto_types.h"
 #include "skill_defs.h"
 #include "stat_defs.h"
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 typedef enum ItemDataMember {
     ITEM_DATA_MEMBER_PID = 0,
@@ -90,6 +88,11 @@ typedef enum ProtoDataMemberType {
     PROTO_DATA_MEMBER_TYPE_STRING = 2,
 } ProtoDataMemberType;
 
+typedef union ProtoDataMemberValue {
+    int integerValue;
+    char* stringValue;
+} ProtoDataMemberValue;
+
 typedef enum PrototypeMessage {
     PROTOTYPE_MESSAGE_NAME,
     PROTOTYPE_MESSAGE_DESCRIPTION,
@@ -97,7 +100,7 @@ typedef enum PrototypeMessage {
 
 extern char _aProto_0[];
 
-extern char _cd_path_base[MAX_PATH];
+extern char _cd_path_base[COMPAT_MAX_PATH];
 extern ProtoList _protoLists[11];
 extern const size_t _proto_sizes[11];
 extern int _protos_been_initialized;
@@ -143,7 +146,7 @@ int _proto_update_gen(Object* obj);
 int _proto_update_init(Object* obj);
 int _proto_dude_update_gender();
 int _proto_dude_init(const char* path);
-int _proto_data_member(int pid, int member, int* value);
+int protoGetDataMember(int pid, int member, ProtoDataMemberValue* value);
 int protoInit();
 void protoReset();
 void protoExit();

@@ -4,6 +4,8 @@
 
 #include "movie_lib.h"
 
+#include "platform_compat.h"
+
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -61,11 +63,15 @@ int _sync_late = 0;
 // 0x51EDEC
 int _sync_FrameDropped = 0;
 
+#ifdef HAVE_DSOUND
 // 0x51EDF0
 LPDIRECTSOUND gMovieLibDirectSound = NULL;
+#endif
 
+#ifdef HAVE_DSOUND
 // 0x51EDF4
 LPDIRECTSOUNDBUFFER gMovieLibDirectSoundBuffer = NULL;
+#endif
 
 // 0x51EDF8
 int gMovieLibVolume = 0;
@@ -259,8 +265,10 @@ unsigned int _$$R0063[256] = {
 // 0x6B3660
 int dword_6B3660;
 
+#ifdef HAVE_DSOUND
 // 0x6B3668
 DSBCAPS stru_6B3668;
+#endif
 
 // 0x6B367C
 int _sf_ScreenWidth;
@@ -467,20 +475,24 @@ void _MVE_MemFree(STRUCT_6B3690* a1)
     a1->field_4 = 0;
 }
 
+#ifdef HAVE_DSOUND
 // 0x4F48F0
 void movieLibSetDirectSound(LPDIRECTSOUND ds)
 {
     gMovieLibDirectSound = ds;
 }
+#endif
 
 // 0x4F4900
 void movieLibSetVolume(int volume)
 {
     gMovieLibVolume = volume;
 
+#ifdef HAVE_DSOUND
     if (gMovieLibDirectSoundBuffer != NULL) {
         IDirectSoundBuffer_SetVolume(gMovieLibDirectSoundBuffer, volume);
     }
+#endif
 }
 
 // 0x4F4920
@@ -488,9 +500,11 @@ void movieLibSetPan(int pan)
 {
     gMovieLibPan = pan;
 
+#ifdef HAVE_DSOUND
     if (gMovieLibDirectSoundBuffer != NULL) {
         IDirectSoundBuffer_SetPan(gMovieLibDirectSoundBuffer, pan);
     }
+#endif
 }
 
 // 0x4F4940
@@ -717,9 +731,9 @@ int _syncWait()
 
     result = 0;
     if (_sync_active) {
-        if (((_sync_time + 1000 * timeGetTime()) & 0x80000000) != 0) {
+        if (((_sync_time + 1000 * compat_timeGetTime()) & 0x80000000) != 0) {
             result = 1;
-            while (((_sync_time + 1000 * timeGetTime()) & 0x80000000) != 0)
+            while (((_sync_time + 1000 * compat_timeGetTime()) & 0x80000000) != 0)
                 ;
         }
         _sync_time += _sync_wait_quanta;
@@ -731,9 +745,11 @@ int _syncWait()
 // 0x4F4EA0
 void _MVE_sndPause()
 {
+#ifdef HAVE_DSOUND
     if (gMovieLibDirectSoundBuffer != NULL) {
         IDirectSoundBuffer_Stop(gMovieLibDirectSoundBuffer);
     }
+#endif
 }
 
 // 0x4F4EC0
@@ -1043,12 +1059,13 @@ int _syncInit(int a1, int a2)
 void _syncReset(int a1)
 {
     _sync_active = 1;
-    _sync_time = -1000 * timeGetTime() + a1;
+    _sync_time = -1000 * compat_timeGetTime() + a1;
 }
 
 // 0x4F5570
 int _MVE_sndConfigure(int a1, int a2, int a3, int a4, int a5, int a6)
 {
+#ifdef HAVE_DSOUND
     DSBUFFERDESC dsbd;
     WAVEFORMATEX wfxFormat;
 
@@ -1094,13 +1111,16 @@ int _MVE_sndConfigure(int a1, int a2, int a3, int a4, int a5, int a6)
     }
 
     return 1;
+#else
+    return 0;
+#endif
 }
 
 // 0x4F56C0
 void _MVE_syncSync()
 {
     if (_sync_active) {
-        while (((_sync_time + 1000 * timeGetTime()) & 0x80000000) != 0) {
+        while (((_sync_time + 1000 * compat_timeGetTime()) & 0x80000000) != 0) {
         }
     }
 }
@@ -1108,16 +1128,19 @@ void _MVE_syncSync()
 // 0x4F56F0
 void _MVE_sndReset()
 {
+#ifdef HAVE_DSOUND
     if (gMovieLibDirectSoundBuffer != NULL) {
         IDirectSoundBuffer_Stop(gMovieLibDirectSoundBuffer);
         IDirectSoundBuffer_Release(gMovieLibDirectSoundBuffer);
         gMovieLibDirectSoundBuffer = NULL;
     }
+#endif
 }
 
 // 0x4F5720
 void _MVE_sndSync()
 {
+#ifdef HAVE_DSOUND
     DWORD dwCurrentPlayCursor;
     DWORD dwCurrentWriteCursor;
     bool v10;
@@ -1255,6 +1278,10 @@ void _MVE_sndSync()
             ++dword_6B3660;
         }
     }
+#else
+    _sync_late = _syncWaitLevel(_sync_wait_quanta >> 2) > -_sync_wait_quanta >> 1 && !_sync_FrameDropped;
+    _sync_FrameDropped = 0;
+#endif
 }
 
 // 0x4F59B0
@@ -1269,7 +1296,7 @@ int _syncWaitLevel(int a1)
 
     v2 = _sync_time + a1;
     do {
-        result = v2 + 1000 * timeGetTime();
+        result = v2 + 1000 * compat_timeGetTime();
     } while (result < 0);
 
     _sync_time += _sync_wait_quanta;
@@ -1280,6 +1307,7 @@ int _syncWaitLevel(int a1)
 // 0x4F5A00
 void _CallsSndBuff_Loc(unsigned char* a1, int a2)
 {
+#ifdef HAVE_DSOUND
     int v2;
     int v3;
     int v5;
@@ -1341,6 +1369,7 @@ void _CallsSndBuff_Loc(unsigned char* a1, int a2)
     } else {
         ++dword_6B3AE4;
     }
+#endif
 }
 
 // 0x4F5B70

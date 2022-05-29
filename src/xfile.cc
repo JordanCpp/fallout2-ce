@@ -3,7 +3,11 @@
 #include "file_find.h"
 
 #include <assert.h>
+#ifdef _WIN32
 #include <direct.h>
+#else
+#include <unistd.h>
+#endif
 #include <io.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,11 +59,11 @@ XFile* xfileOpen(const char* filePath, const char* mode)
     memset(stream, 0, sizeof(*stream));
 
     // NOTE: Compiled code uses different lengths.
-    char drive[_MAX_DRIVE];
-    char dir[_MAX_DIR];
-    _splitpath(filePath, drive, dir, NULL, NULL);
+    char drive[COMPAT_MAX_DRIVE];
+    char dir[COMPAT_MAX_DIR];
+    compat_splitpath(filePath, drive, dir, NULL, NULL);
 
-    char path[FILENAME_MAX];
+    char path[COMPAT_MAX_PATH];
     if (drive[0] != '\0' || dir[0] == '\\' || dir[0] == '/' || dir[0] == '.') {
         // [filePath] is an absolute path. Attempt to open as plain stream.
         stream->file = fopen(filePath, mode);
@@ -418,7 +422,7 @@ long xfileGetSize(XFile* stream)
         fileSize = 0;
         break;
     default:
-        fileSize = filelength(fileno(stream->file));
+        fileSize = compat_filelength(fileno(stream->file));
         break;
     }
 
@@ -464,7 +468,7 @@ bool xbaseOpen(const char* path)
     XBase* curr = gXbaseHead;
     XBase* prev = NULL;
     while (curr != NULL) {
-        if (stricmp(path, curr->path) == 0) {
+        if (compat_stricmp(path, curr->path) == 0) {
             break;
         }
 
@@ -504,8 +508,8 @@ bool xbaseOpen(const char* path)
         return true;
     }
 
-    char workingDirectory[FILENAME_MAX];
-    if (getcwd(workingDirectory, FILENAME_MAX) == NULL) {
+    char workingDirectory[COMPAT_MAX_PATH];
+    if (getcwd(workingDirectory, COMPAT_MAX_PATH) == NULL) {
         // FIXME: Leaking xbase and path.
         return false;
     }
@@ -541,26 +545,16 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
 
     context.xlist = xlist;
 
-    char drive[_MAX_DRIVE];
-    char dir[_MAX_DIR];
-    char fileName[_MAX_FNAME];
-    char extension[_MAX_EXT];
-    _splitpath(pattern, drive, dir, fileName, extension);
+    char drive[COMPAT_MAX_DRIVE];
+    char dir[COMPAT_MAX_DIR];
+    char fileName[COMPAT_MAX_FNAME];
+    char extension[COMPAT_MAX_EXT];
+    compat_splitpath(pattern, drive, dir, fileName, extension);
     if (drive[0] != '\0' || dir[0] == '\\' || dir[0] == '/' || dir[0] == '.') {
         if (fileFindFirst(pattern, &directoryFileFindData)) {
             do {
-                bool isDirectory;
-                char* entryName;
-
-#if defined(_MSC_VER)
-                isDirectory = (directoryFileFindData.ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                entryName = directoryFileFindData.ffd.cFileName;
-#elif defined(__WATCOMC__)
-                isDirectory = (directoryFileFindData.entry->d_attr & _A_SUBDIR) != 0;
-                entryName = directoryFileFindData.entry->d_name;
-#else
-#error Not implemented
-#endif
+                bool isDirectory = fileFindIsDirectory(&directoryFileFindData);
+                char* entryName = fileFindGetName(&directoryFileFindData);
 
                 if (isDirectory) {
                     if (strcmp(entryName, "..") == 0 || strcmp(entryName, ".") == 0) {
@@ -572,7 +566,7 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
                     context.type = XFILE_ENUMERATION_ENTRY_TYPE_FILE;
                 }
 
-                _makepath(context.name, drive, dir, entryName, NULL);
+                compat_makepath(context.name, drive, dir, entryName, NULL);
 
                 if (!handler(&context)) {
                     break;
@@ -599,23 +593,13 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
                 dbaseFindClose(xbase->dbase, &dbaseFindData);
             }
         } else {
-            char path[FILENAME_MAX];
+            char path[COMPAT_MAX_PATH];
             sprintf(path, "%s\\%s", xbase->path, pattern);
 
             if (fileFindFirst(path, &directoryFileFindData)) {
                 do {
-                    bool isDirectory;
-                    char* entryName;
-
-#if defined(_MSC_VER)
-                    isDirectory = (directoryFileFindData.ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-                    entryName = directoryFileFindData.ffd.cFileName;
-#elif defined(__WATCOMC__)
-                    isDirectory = (directoryFileFindData.entry->d_attr & _A_SUBDIR) != 0;
-                    entryName = directoryFileFindData.entry->d_name;
-#else
-#error Not implemented
-#endif
+                    bool isDirectory = fileFindIsDirectory(&directoryFileFindData);
+                    char* entryName = fileFindGetName(&directoryFileFindData);
 
                     if (isDirectory) {
                         if (strcmp(entryName, "..") == 0 || strcmp(entryName, ".") == 0) {
@@ -627,7 +611,7 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
                         context.type = XFILE_ENUMERATION_ENTRY_TYPE_FILE;
                     }
 
-                    _makepath(context.name, drive, dir, entryName, NULL);
+                    compat_makepath(context.name, drive, dir, entryName, NULL);
 
                     if (!handler(&context)) {
                         break;
@@ -639,21 +623,11 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
         xbase = xbase->next;
     }
 
-    _splitpath(pattern, drive, dir, fileName, extension);
+    compat_splitpath(pattern, drive, dir, fileName, extension);
     if (fileFindFirst(pattern, &directoryFileFindData)) {
         do {
-            bool isDirectory;
-            char* entryName;
-
-#if defined(_MSC_VER)
-            isDirectory = (directoryFileFindData.ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            entryName = directoryFileFindData.ffd.cFileName;
-#elif defined(__WATCOMC__)
-            isDirectory = (directoryFileFindData.entry->d_attr & _A_SUBDIR) != 0;
-            entryName = directoryFileFindData.entry->d_name;
-#else
-#error Not implemented
-#endif
+            bool isDirectory = fileFindIsDirectory(&directoryFileFindData);
+            char* entryName = fileFindGetName(&directoryFileFindData);
 
             if (isDirectory) {
                 if (strcmp(entryName, "..") == 0 || strcmp(entryName, ".") == 0) {
@@ -665,7 +639,7 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
                 context.type = XFILE_ENUMERATION_ENTRY_TYPE_FILE;
             }
 
-            _makepath(context.name, drive, dir, entryName, NULL);
+            compat_makepath(context.name, drive, dir, entryName, NULL);
 
             if (!handler(&context)) {
                 break;
@@ -703,16 +677,16 @@ void xlistFree(XList* xlist)
 // 0x4DFFAC
 int xbaseMakeDirectory(const char* filePath)
 {
-    char workingDirectory[FILENAME_MAX];
-    if (getcwd(workingDirectory, FILENAME_MAX) == NULL) {
+    char workingDirectory[COMPAT_MAX_PATH];
+    if (getcwd(workingDirectory, COMPAT_MAX_PATH) == NULL) {
         return -1;
     }
 
-    char drive[_MAX_DRIVE];
-    char dir[_MAX_DIR];
-    _splitpath(filePath, drive, dir, NULL, NULL);
+    char drive[COMPAT_MAX_DRIVE];
+    char dir[COMPAT_MAX_DIR];
+    compat_splitpath(filePath, drive, dir, NULL, NULL);
 
-    char path[FILENAME_MAX];
+    char path[COMPAT_MAX_PATH];
     if (drive[0] != '\0' || dir[0] == '\\' || dir[0] == '/' || dir[0] == '.') {
         // [filePath] is an absolute path.
         strcpy(path, filePath);
@@ -746,7 +720,7 @@ int xbaseMakeDirectory(const char* filePath)
             *pch = '\0';
 
             if (chdir(path) != 0) {
-                if (mkdir(path) != 0) {
+                if (compat_mkdir(path) != 0) {
                     chdir(workingDirectory);
                     return -1;
                 }
@@ -760,7 +734,7 @@ int xbaseMakeDirectory(const char* filePath)
     }
 
     // Last path component.
-    mkdir(path);
+    compat_mkdir(path);
 
     chdir(workingDirectory);
 

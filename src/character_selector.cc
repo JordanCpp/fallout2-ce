@@ -14,6 +14,7 @@
 #include "object.h"
 #include "options.h"
 #include "palette.h"
+#include "platform_compat.h"
 #include "proto.h"
 #include "skill.h"
 #include "stat.h"
@@ -239,6 +240,9 @@ int characterSelectorOpen()
 // 0x4A7468
 bool characterSelectorWindowInit()
 {
+    int backgroundFid;
+    unsigned char* backgroundFrmData;
+
     if (gCharacterSelectorWindow != -1) {
         return false;
     }
@@ -256,8 +260,8 @@ bool characterSelectorWindowInit()
     }
 
     CacheEntry* backgroundFrmHandle;
-    int backgroundFid = buildFid(6, 174, 0, 0, 0);
-    unsigned char* backgroundFrmData = artLockFrameData(backgroundFid, 0, 0, &backgroundFrmHandle);
+    backgroundFid = buildFid(6, 174, 0, 0, 0);
+    backgroundFrmData = artLockFrameData(backgroundFid, 0, 0, &backgroundFrmHandle);
     if (backgroundFrmData == NULL) {
         goto err;
     }
@@ -613,7 +617,7 @@ void characterSelectorWindowFree()
 // 0x4A7D58
 bool characterSelectorWindowRefresh()
 {
-    char path[FILENAME_MAX];
+    char path[COMPAT_MAX_PATH];
     sprintf(path, "%s.gcd", gPremadeCharacterDescriptions[gCurrentPremadeCharacter].fileName);
     if (_proto_dude_init(path) == -1) {
         debugPrint("\n ** Error in dude init! **\n");
@@ -919,7 +923,7 @@ bool characterSelectorWindowRenderBio()
     int oldFont = fontGetCurrent();
     fontSetCurrent(101);
 
-    char path[FILENAME_MAX];
+    char path[COMPAT_MAX_PATH];
     sprintf(path, "%s.bio", gPremadeCharacterDescriptions[gCurrentPremadeCharacter].fileName);
 
     File* stream = fileOpen(path, "rt");

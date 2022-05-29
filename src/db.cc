@@ -1,5 +1,6 @@
 #include "db.h"
 
+#include "platform_compat.h"
 #include "xfile.h"
 
 #include <assert.h>
@@ -620,7 +621,7 @@ int fileNameListInit(const char* pattern, char*** fileNameListPtr, int a3, int a
 
         int fileNamesLength = xlist->fileNamesLength;
         for (int index = 0; index < fileNamesLength - 1; index++) {
-            if (stricmp(xlist->fileNames[index], xlist->fileNames[index + 1]) == 0) {
+            if (compat_stricmp(xlist->fileNames[index], xlist->fileNames[index + 1]) == 0) {
                 char* temp = xlist->fileNames[index + 1];
                 memmove(&(xlist->fileNames[index + 1]), &(xlist->fileNames[index + 2]), sizeof(*xlist->fileNames) * (xlist->fileNamesLength - index - 1));
                 xlist->fileNames[xlist->fileNamesLength - 1] = temp;
@@ -634,10 +635,10 @@ int fileNameListInit(const char* pattern, char*** fileNameListPtr, int a3, int a
 
         for (int index = 0; index < fileNamesLength; index += 1) {
             const char* name = xlist->fileNames[index];
-            char dir[_MAX_DIR];
-            char fileName[_MAX_FNAME];
-            char extension[_MAX_EXT];
-            _splitpath(name, NULL, dir, fileName, extension);
+            char dir[COMPAT_MAX_DIR];
+            char fileName[COMPAT_MAX_FNAME];
+            char extension[COMPAT_MAX_EXT];
+            compat_splitpath(name, NULL, dir, fileName, extension);
 
             bool v2 = false;
             if (v1) {
@@ -730,5 +731,5 @@ void _db_enable_hash_table_()
 // 0x4C68E8
 int _db_list_compare(const void* p1, const void* p2)
 {
-    return stricmp(*(const char**)p1, *(const char**)p2);
+    return compat_stricmp(*(const char**)p1, *(const char**)p2);
 }

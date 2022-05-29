@@ -16,6 +16,7 @@
 #include "game_movie.h"
 #include "memory.h"
 #include "object.h"
+#include "platform_compat.h"
 #include "proto.h"
 #include "proto_instance.h"
 #include "queue.h"
@@ -24,6 +25,7 @@
 #include "window_manager_private.h"
 #include "world_map.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -596,7 +598,7 @@ int scriptSetActionBeingUsed(int sid, int value)
 // 0x4A3B74
 Program* scriptsCreateProgramByName(const char* name)
 {
-    char path[MAX_PATH];
+    char path[COMPAT_MAX_PATH];
 
     strcpy(path, _cd_path_base);
     strcat(path, gScriptsBasePath);
@@ -1291,7 +1293,7 @@ bool scriptHasProc(int sid, int proc)
 // 0x4A4D50
 int scriptsLoadScriptsList()
 {
-    char path[MAX_PATH];
+    char path[COMPAT_MAX_PATH];
     sprintf(path, "%s%s", "scripts\\", "scripts.lst");
 
     File* stream = fileOpen(path, "rt");
@@ -1477,7 +1479,7 @@ int _scr_reset()
 int _scr_game_init()
 {
     int i;
-    char path[MAX_PATH];
+    char path[COMPAT_MAX_PATH];
 
     if (!messageListInit(&gScrMessageList)) {
         debugPrint("\nError initing script message file!");
@@ -1666,7 +1668,7 @@ int _scr_header_load()
 {
     _num_script_indexes = 0;
 
-    char path[MAX_PATH];
+    char path[COMPAT_MAX_PATH];
     strcpy(path, _cd_path_base);
     strcat(path, gScriptsBasePath);
     strcat(path, "scripts.lst");
@@ -2590,7 +2592,7 @@ int scriptsGetMessageList(int a1, MessageList** messageListPtr)
             *pch = '\0';
         }
 
-        char path[MAX_PATH];
+        char path[COMPAT_MAX_PATH];
         sprintf(path, "dialog\\%s.msg", scriptName);
 
         if (!messageListLoad(messageList, path)) {

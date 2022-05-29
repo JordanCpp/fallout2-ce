@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "movie.h"
 #include "palette.h"
+#include "platform_compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,7 +93,7 @@ int movieEffectsLoad(const char* filePath)
 
     int rc = -1;
 
-    char path[FILENAME_MAX];
+    char path[COMPAT_MAX_PATH];
     strcpy(path, filePath);
 
     char* pch = strrchr(path, '.');
@@ -101,6 +102,8 @@ int movieEffectsLoad(const char* filePath)
     }
 
     strcpy(path + strlen(path), ".cfg");
+
+    int* movieEffectFrameList;
 
     if (!configRead(&config, path, true)) {
         goto out;
@@ -111,7 +114,7 @@ int movieEffectsLoad(const char* filePath)
         goto out;
     }
 
-    int* movieEffectFrameList = (int*)internal_malloc(sizeof(*movieEffectFrameList) * movieEffectsLength);
+    movieEffectFrameList = (int*)internal_malloc(sizeof(*movieEffectFrameList) * movieEffectsLength);
     if (movieEffectFrameList == NULL) {
         goto out;
     }
@@ -127,7 +130,7 @@ int movieEffectsLoad(const char* filePath)
         int movieEffectsCreated = 0;
         for (int index = 0; index < movieEffectsLength; index++) {
             char section[20];
-            itoa(movieEffectFrameList[index], section, 10);
+            compat_itoa(movieEffectFrameList[index], section, 10);
 
             char* fadeTypeString;
             if (!configGetString(&config, section, "fade_type", &fadeTypeString)) {
@@ -135,9 +138,9 @@ int movieEffectsLoad(const char* filePath)
             }
 
             int fadeType = MOVIE_EFFECT_TYPE_NONE;
-            if (stricmp(fadeTypeString, "in") == 0) {
+            if (compat_stricmp(fadeTypeString, "in") == 0) {
                 fadeType = MOVIE_EFFECT_TYPE_FADE_IN;
-            } else if (stricmp(fadeTypeString, "out") == 0) {
+            } else if (compat_stricmp(fadeTypeString, "out") == 0) {
                 fadeType = MOVIE_EFFECT_TYPE_FADE_OUT;
             }
 

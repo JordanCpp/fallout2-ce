@@ -1,16 +1,11 @@
 #include "random.h"
 
 #include "debug.h"
+#include "platform_compat.h"
 #include "scripts.h"
 
 #include <limits.h>
 #include <stdlib.h>
-
-// clang-format off
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <timeapi.h>
-// clang-format on
 
 // 0x50D4BA
 const double dbl_50D4BA = 36.42;
@@ -208,7 +203,7 @@ void randomSeedPrerandomInternal(int seed)
 // 0x4A3258
 unsigned int randomGetSeed()
 {
-    return timeGetTime();
+    return compat_timeGetTime();
 }
 
 // 0x4A3264

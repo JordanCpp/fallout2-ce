@@ -8,9 +8,12 @@
 #include "memory.h"
 #include "palette.h"
 #include "text_font.h"
+#include "win32.h"
 #include "window_manager_private.h"
 
 #include <SDL.h>
+
+#include <algorithm>
 
 // 0x50FA30
 char _path_patches[] = "";
@@ -781,10 +784,10 @@ void _GNW_win_refresh(Window* window, Rect* rect, unsigned char* a3)
 
         v26->next = NULL;
 
-        v26->rect.left = max(window->rect.left, rect->left);
-        v26->rect.top = max(window->rect.top, rect->top);
-        v26->rect.right = min(window->rect.right, rect->right);
-        v26->rect.bottom = min(window->rect.bottom, rect->bottom);
+        v26->rect.left = std::max(window->rect.left, rect->left);
+        v26->rect.top = std::max(window->rect.top, rect->top);
+        v26->rect.right = std::min(window->rect.right, rect->right);
+        v26->rect.bottom = std::min(window->rect.bottom, rect->bottom);
 
         if (v26->rect.right >= v26->rect.left && v26->rect.bottom >= v26->rect.top) {
             if (a3) {
