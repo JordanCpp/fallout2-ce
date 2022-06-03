@@ -4,11 +4,19 @@
 #include "memory.h"
 #include "platform_compat.h"
 
+#ifdef _WIN32
 #include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include <limits.h>
 #include <math.h>
+#ifdef HAVE_DSOUND
 #include <mmsystem.h>
+#endif
 #include <stdlib.h>
+#include <string.h>
 
 #include <algorithm>
 
@@ -34,10 +42,10 @@ FreeProc* gSoundFreeProc = soundFreeProcDefaultImpl;
 SoundFileIO gSoundDefaultFileIO = {
     open,
     close,
-    read,
-    write,
-    lseek,
-    tell,
+    compat_read,
+    compat_write,
+    compat_lseek,
+    compat_tell,
     compat_filelength,
     -1,
 };
@@ -1532,6 +1540,7 @@ int _soundSetMasterVolume(int volume)
     return gSoundLastError;
 }
 
+#ifdef HAVE_DSOUND
 // 0x4AE5C8
 void CALLBACK _doTimerEvent(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
@@ -1551,6 +1560,7 @@ void _removeTimedEvent(unsigned int* timerId)
         *timerId = -1;
     }
 }
+#endif
 
 // 0x4AE634
 int _soundGetPosition(Sound* sound)
@@ -1715,10 +1725,12 @@ void _fadeSounds()
         }
     }
 
+#ifdef HAVE_DSOUND
     if (_fadeHead == NULL && _fadeEventHandle != -1) {
         timeKillEvent(_fadeEventHandle);
         _fadeEventHandle = -1;
     }
+#endif
 }
 
 // 0x4AE988

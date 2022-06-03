@@ -21,7 +21,7 @@
 #ifdef _WIN32
 #include <timeapi.h>
 #else
-#include <sys/time.h>
+#include <chrono>
 #endif
 
 int compat_stricmp(const char* string1, const char* string2)
@@ -101,6 +101,26 @@ void compat_makepath(char* path, const char* drive, const char* dir, const char*
 #endif
 }
 
+int compat_read(int fileHandle, void* buf, unsigned int size)
+{
+    return read(fileHandle, buf, size);
+}
+
+int compat_write(int fileHandle, const void* buf, unsigned int size)
+{
+    return write(fileHandle, buf, size);
+}
+
+long compat_lseek(int fileHandle, long offset, int origin)
+{
+    return lseek(fileHandle, offset, origin);
+}
+
+long compat_tell(int fd)
+{
+    return lseek(fd, 0, SEEK_CUR);
+}
+
 long compat_filelength(int fd)
 {
     long originalOffset = lseek(fd, 0, SEEK_CUR);
@@ -125,8 +145,8 @@ unsigned int compat_timeGetTime()
 #ifdef _WIN32
     return timeGetTime();
 #else
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_usec / 1000;
+    static auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<unsigned int>(std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count());
 #endif
 }

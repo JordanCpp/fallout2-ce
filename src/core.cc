@@ -12,8 +12,12 @@
 #include "window_manager.h"
 #include "window_manager_private.h"
 
+#include <limits.h>
+#include <string.h>
 #include <SDL.h>
+#if _WIN32
 #include <SDL_syswm.h>
+#endif
 
 // NOT USED.
 void (*_idle_func)() = NULL;
