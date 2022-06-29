@@ -1,5 +1,6 @@
 #include "loadsave.h"
 
+#include "art.h"
 #include "automap.h"
 #include "character_editor.h"
 #include "color.h"
@@ -8,6 +9,7 @@
 #include "core.h"
 #include "critter.h"
 #include "cycle.h"
+#include "db.h"
 #include "dbox.h"
 #include "debug.h"
 #include "display_monitor.h"
@@ -18,14 +20,18 @@
 #include "game_mouse.h"
 #include "game_movie.h"
 #include "game_sound.h"
+#include "geometry.h"
 #include "interface.h"
 #include "item.h"
 #include "map.h"
 #include "memory.h"
+#include "message.h"
 #include "object.h"
 #include "options.h"
+#include "party_member.h"
 #include "perk.h"
 #include "pipboy.h"
+#include "platform_compat.h"
 #include "proto.h"
 #include "queue.h"
 #include "random.h"
@@ -57,8 +63,106 @@
 #define LS_COMMENT_WINDOW_X 169
 #define LS_COMMENT_WINDOW_Y 116
 
+// NOTE: The following are "normalized" path components for "proto/critters" and
+// "proto/items". The original code does not use uniform case for them (as
+// opposed to other path components like MAPS, SAVE.DAT, etc). It does not have
+// effect on Windows, but it's important on Linux and Mac, where filesystem is
+// case-sensitive. Lowercase is preferred as it is used in other parts of the
+// codebase (see `protoInit`, `gArtListDescriptions`).
+
+#define PROTO_DIR_NAME "proto"
+#define CRITTERS_DIR_NAME "critters"
+#define ITEMS_DIR_NAME "items"
+#define PROTO_FILE_EXT "pro"
+
+#define LOAD_SAVE_DESCRIPTION_LENGTH (30)
+#define LOAD_SAVE_HANDLER_COUNT (27)
+
+typedef enum LoadSaveWindowType {
+    LOAD_SAVE_WINDOW_TYPE_SAVE_GAME,
+    LOAD_SAVE_WINDOW_TYPE_PICK_QUICK_SAVE_SLOT,
+    LOAD_SAVE_WINDOW_TYPE_LOAD_GAME,
+    LOAD_SAVE_WINDOW_TYPE_LOAD_GAME_FROM_MAIN_MENU,
+    LOAD_SAVE_WINDOW_TYPE_PICK_QUICK_LOAD_SLOT,
+} LoadSaveWindowType;
+
+typedef enum LoadSaveSlotState {
+    SLOT_STATE_EMPTY,
+    SLOT_STATE_OCCUPIED,
+    SLOT_STATE_ERROR,
+    SLOT_STATE_UNSUPPORTED_VERSION,
+} LoadSaveSlotState;
+
+typedef int LoadGameHandler(File* stream);
+typedef int SaveGameHandler(File* stream);
+
+#define LSGAME_MSG_NAME ("LSGAME.MSG")
+
+typedef struct STRUCT_613D30 {
+    char field_0[24];
+    short field_18;
+    short field_1A;
+    // TODO: The type is probably char, but it's read with the same function as
+    // reading unsigned chars, which in turn probably result of collapsing
+    // reading functions.
+    unsigned char field_1C;
+    char character_name[32];
+    char description[LOAD_SAVE_DESCRIPTION_LENGTH];
+    short field_5C;
+    short field_5E;
+    short field_60;
+    int field_64;
+    short field_68;
+    short field_6A;
+    short field_6C;
+    int field_70;
+    short field_74;
+    short field_76;
+    char file_name[16];
+} STRUCT_613D30;
+
+typedef enum LoadSaveFrm {
+    LOAD_SAVE_FRM_BACKGROUND,
+    LOAD_SAVE_FRM_BOX,
+    LOAD_SAVE_FRM_PREVIEW_COVER,
+    LOAD_SAVE_FRM_RED_BUTTON_PRESSED,
+    LOAD_SAVE_FRM_RED_BUTTON_NORMAL,
+    LOAD_SAVE_FRM_ARROW_DOWN_NORMAL,
+    LOAD_SAVE_FRM_ARROW_DOWN_PRESSED,
+    LOAD_SAVE_FRM_ARROW_UP_NORMAL,
+    LOAD_SAVE_FRM_ARROW_UP_PRESSED,
+    LOAD_SAVE_FRM_COUNT,
+} LoadSaveFrm;
+
+static int _QuickSnapShot();
+static int lsgWindowInit(int windowType);
+static int lsgWindowFree(int windowType);
+static int lsgPerformSaveGame();
+static int lsgLoadGameInSlot(int slot);
+static int lsgSaveHeaderInSlot(int slot);
+static int lsgLoadHeaderInSlot(int slot);
+static int _GetSlotList();
+static void _ShowSlotList(int a1);
+static void _DrawInfoBox(int a1);
+static int _LoadTumbSlot(int a1);
+static int _GetComment(int a1);
+static int _get_input_str2(int win, int doneKeyCode, int cancelKeyCode, char* description, int maxLength, int x, int y, int textColor, int backgroundColor, int flags);
+static int _DummyFunc(File* stream);
+static int _PrepLoad(File* stream);
+static int _EndLoad(File* stream);
+static int _GameMap2Slot(File* stream);
+static int _SlotMap2Game(File* stream);
+static int _mygets(char* dest, File* stream);
+static int _copy_file(const char* a1, const char* a2);
+static int _MapDirErase(const char* path, const char* a2);
+static int _SaveBackup();
+static int _RestoreSave();
+static int _LoadObjDudeCid(File* stream);
+static int _SaveObjDudeCid(File* stream);
+static int _EraseSave();
+
 // 0x47B7C0
-const int gLoadSaveFrmIds[LOAD_SAVE_FRM_COUNT] = {
+static const int gLoadSaveFrmIds[LOAD_SAVE_FRM_COUNT] = {
     237, // lsgame.frm - load/save game
     238, // lsgbox.frm - load/save game
     239, // lscover.frm - load/save game
@@ -71,28 +175,28 @@ const int gLoadSaveFrmIds[LOAD_SAVE_FRM_COUNT] = {
 };
 
 // 0x5193B8
-int _slot_cursor = 0;
+static int _slot_cursor = 0;
 
 // 0x5193BC
-bool _quick_done = false;
+static bool _quick_done = false;
 
 // 0x5193C0
-bool gLoadSaveWindowIsoWasEnabled = false;
+static bool gLoadSaveWindowIsoWasEnabled = false;
 
 // 0x5193C4
-int _map_backup_count = -1;
+static int _map_backup_count = -1;
 
 // 0x5193C8
-int _automap_db_flag = 0;
+static int _automap_db_flag = 0;
 
 // 0x5193CC
-char* _patches = NULL;
+static char* _patches = NULL;
 
 // 0x5193D0
-char _emgpath[] = "\\FALLOUT\\CD\\DATA\\SAVEGAME";
+static char _emgpath[] = "\\FALLOUT\\CD\\DATA\\SAVEGAME";
 
 // 0x5193EC
-SaveGameHandler* _master_save_list[LOAD_SAVE_HANDLER_COUNT] = {
+static SaveGameHandler* _master_save_list[LOAD_SAVE_HANDLER_COUNT] = {
     _DummyFunc,
     _SaveObjDudeCid,
     scriptsSaveGameGlobalVars,
@@ -123,7 +227,7 @@ SaveGameHandler* _master_save_list[LOAD_SAVE_HANDLER_COUNT] = {
 };
 
 // 0x519458
-LoadGameHandler* _master_load_list[LOAD_SAVE_HANDLER_COUNT] = {
+static LoadGameHandler* _master_load_list[LOAD_SAVE_HANDLER_COUNT] = {
     _PrepLoad,
     _LoadObjDudeCid,
     scriptsLoadGameGlobalVars,
@@ -154,72 +258,72 @@ LoadGameHandler* _master_load_list[LOAD_SAVE_HANDLER_COUNT] = {
 };
 
 // 0x5194C4
-int _loadingGame = 0;
+static int _loadingGame = 0;
 
 // 0x613CE0
-Size gLoadSaveFrmSizes[LOAD_SAVE_FRM_COUNT];
+static Size gLoadSaveFrmSizes[LOAD_SAVE_FRM_COUNT];
 
 // lsgame.msg
 //
 // 0x613D28
-MessageList gLoadSaveMessageList;
+static MessageList gLoadSaveMessageList;
 
 // 0x613D30
-STRUCT_613D30 _LSData[10];
+static STRUCT_613D30 _LSData[10];
 
 // 0x614280
-int _LSstatus[10];
+static int _LSstatus[10];
 
 // 0x6142A8
-unsigned char* _thumbnail_image;
+static unsigned char* _thumbnail_image;
 
 // 0x6142AC
-unsigned char* _snapshotBuf;
+static unsigned char* _snapshotBuf;
 
 // 0x6142B0
-MessageListItem gLoadSaveMessageListItem;
+static MessageListItem gLoadSaveMessageListItem;
 
 // 0x6142C0
-int _dbleclkcntr;
+static int _dbleclkcntr;
 
 // 0x6142C4
-int gLoadSaveWindow;
+static int gLoadSaveWindow;
 
 // 0x6142C8
-unsigned char* gLoadSaveFrmData[LOAD_SAVE_FRM_COUNT];
+static unsigned char* gLoadSaveFrmData[LOAD_SAVE_FRM_COUNT];
 
 // 0x6142EC
-unsigned char* _snapshot;
+static unsigned char* _snapshot;
 
 // 0x6142F0
-char _str2[COMPAT_MAX_PATH];
+static char _str2[COMPAT_MAX_PATH];
 
 // 0x6143F4
-char _str0[COMPAT_MAX_PATH];
+static char _str0[COMPAT_MAX_PATH];
 
 // 0x6144F8
-char _str1[COMPAT_MAX_PATH];
+static char _str1[COMPAT_MAX_PATH];
 
 // 0x6145FC
-char _str[COMPAT_MAX_PATH];
+static char _str[COMPAT_MAX_PATH];
 
 // 0x614700
-unsigned char* gLoadSaveWindowBuffer;
+static unsigned char* gLoadSaveWindowBuffer;
 
 // 0x614704
-char _gmpath[COMPAT_MAX_PATH];
+static char _gmpath[COMPAT_MAX_PATH];
 
 // 0x614808
-File* _flptr;
+static File* _flptr;
 
 // 0x61480C
-int _ls_error_code;
+static int _ls_error_code;
 
 // 0x614810
-int gLoadSaveWindowOldFont;
+static int gLoadSaveWindowOldFont;
 
 // 0x614814
-CacheEntry* gLoadSaveFrmHandles[LOAD_SAVE_FRM_COUNT];
+static CacheEntry* gLoadSaveFrmHandles[LOAD_SAVE_FRM_COUNT];
 
 // 0x47B7E4
 void _InitLoadSave()
@@ -233,16 +337,16 @@ void _InitLoadSave()
     }
 
     _MapDirErase("MAPS\\", "SAV");
-    _MapDirErase("PROTO\\CRITTERS\\", "PRO");
-    _MapDirErase("PROTO\\ITEMS\\", "PRO");
+    _MapDirErase(PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME "\\", PROTO_FILE_EXT);
+    _MapDirErase(PROTO_DIR_NAME "\\" ITEMS_DIR_NAME "\\", PROTO_FILE_EXT);
 }
 
 // 0x47B85C
 void _ResetLoadSave()
 {
     _MapDirErase("MAPS\\", "SAV");
-    _MapDirErase("PROTO\\CRITTERS\\", "PRO");
-    _MapDirErase("PROTO\\ITEMS\\", "PRO");
+    _MapDirErase(PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME "\\", PROTO_FILE_EXT);
+    _MapDirErase(PROTO_DIR_NAME "\\" ITEMS_DIR_NAME "\\", PROTO_FILE_EXT);
 }
 
 // SaveGame
@@ -605,7 +709,7 @@ int lsgSaveGame(int mode)
 }
 
 // 0x47C5B4
-int _QuickSnapShot()
+static int _QuickSnapShot()
 {
     _snapshot = (unsigned char*)internal_malloc(LS_PREVIEW_SIZE);
     if (_snapshot == NULL) {
@@ -1060,7 +1164,7 @@ int lsgLoadGame(int mode)
 }
 
 // 0x47D2E4
-int lsgWindowInit(int windowType)
+static int lsgWindowInit(int windowType)
 {
     gLoadSaveWindowOldFont = fontGetCurrent();
     fontSetCurrent(103);
@@ -1290,7 +1394,7 @@ int lsgWindowInit(int windowType)
 }
 
 // 0x47D824
-int lsgWindowFree(int windowType)
+static int lsgWindowFree(int windowType)
 {
     windowDestroy(gLoadSaveWindow);
     fontSetCurrent(gLoadSaveWindowOldFont);
@@ -1315,7 +1419,7 @@ int lsgWindowFree(int windowType)
 }
 
 // 0x47D88C
-int lsgPerformSaveGame()
+static int lsgPerformSaveGame()
 {
     _ls_error_code = 0;
     _map_backup_count = -1;
@@ -1329,15 +1433,15 @@ int lsgPerformSaveGame()
     sprintf(_gmpath, "%s\\%s\\%s%.2d", _patches, "SAVEGAME", "SLOT", _slot_cursor + 1);
     compat_mkdir(_gmpath);
 
-    strcat(_gmpath, "\\proto");
+    strcat(_gmpath, "\\" PROTO_DIR_NAME);
     compat_mkdir(_gmpath);
 
     char* protoBasePath = _gmpath + strlen(_gmpath);
 
-    strcpy(protoBasePath, "\\critters");
+    strcpy(protoBasePath, "\\" CRITTERS_DIR_NAME);
     compat_mkdir(_gmpath);
 
-    strcpy(protoBasePath, "\\items");
+    strcpy(protoBasePath, "\\" ITEMS_DIR_NAME);
     compat_mkdir(_gmpath);
 
     if (_SaveBackup() == -1) {
@@ -1416,7 +1520,7 @@ int _isLoadingGame()
 }
 
 // 0x47DC68
-int lsgLoadGameInSlot(int slot)
+static int lsgLoadGameInSlot(int slot)
 {
     _loadingGame = 1;
 
@@ -1487,7 +1591,7 @@ int lsgLoadGameInSlot(int slot)
 }
 
 // 0x47DF10
-int lsgSaveHeaderInSlot(int slot)
+static int lsgSaveHeaderInSlot(int slot)
 {
     _ls_error_code = 4;
 
@@ -1576,7 +1680,8 @@ int lsgSaveHeaderInSlot(int slot)
     char mapName[128];
     strcpy(mapName, gMapHeader.name);
 
-    char* v1 = _strmfe(_str, mapName, "sav");
+    // NOTE: Uppercased from "sav".
+    char* v1 = _strmfe(_str, mapName, "SAV");
     strncpy(ptr->file_name, v1, 16);
     if (fileWrite(ptr->file_name, 16, 1, _flptr) != 1) {
         return -1;
@@ -1597,7 +1702,7 @@ int lsgSaveHeaderInSlot(int slot)
 }
 
 // 0x47E2E4
-int lsgLoadHeaderInSlot(int slot)
+static int lsgLoadHeaderInSlot(int slot)
 {
     _ls_error_code = 3;
 
@@ -1689,7 +1794,7 @@ int lsgLoadHeaderInSlot(int slot)
 }
 
 // 0x47E5D0
-int _GetSlotList()
+static int _GetSlotList()
 {
     int index = 0;
     for (; index < 10; index += 1) {
@@ -1725,7 +1830,7 @@ int _GetSlotList()
 }
 
 // 0x47E6D8
-void _ShowSlotList(int a1)
+static void _ShowSlotList(int a1)
 {
     bufferFill(gLoadSaveWindowBuffer + LS_WINDOW_WIDTH * 87 + 55, 230, 353, LS_WINDOW_WIDTH, gLoadSaveWindowBuffer[LS_WINDOW_WIDTH * 86 + 55] & 0xFF);
 
@@ -1767,7 +1872,7 @@ void _ShowSlotList(int a1)
 }
 
 // 0x47E8E0
-void _DrawInfoBox(int a1)
+static void _DrawInfoBox(int a1)
 {
     blitBufferToBuffer(gLoadSaveFrmData[LOAD_SAVE_FRM_BACKGROUND] + LS_WINDOW_WIDTH * 254 + 396, 164, 60, LS_WINDOW_WIDTH, gLoadSaveWindowBuffer + LS_WINDOW_WIDTH * 254 + 396, 640);
 
@@ -1836,7 +1941,7 @@ void _DrawInfoBox(int a1)
 }
 
 // 0x47EC48
-int _LoadTumbSlot(int a1)
+static int _LoadTumbSlot(int a1)
 {
     File* stream;
     int v2;
@@ -1871,7 +1976,7 @@ int _LoadTumbSlot(int a1)
 }
 
 // 0x47ED5C
-int _GetComment(int a1)
+static int _GetComment(int a1)
 {
     // Maintain original position in original resolution, otherwise center it.
     int commentWindowX = screenGetWidth() != 640
@@ -1993,7 +2098,7 @@ int _GetComment(int a1)
 }
 
 // 0x47F084
-int _get_input_str2(int win, int doneKeyCode, int cancelKeyCode, char* description, int maxLength, int x, int y, int textColor, int backgroundColor, int flags)
+static int _get_input_str2(int win, int doneKeyCode, int cancelKeyCode, char* description, int maxLength, int x, int y, int textColor, int backgroundColor, int flags)
 {
     int cursorWidth = fontGetStringWidth("_") - 4;
     int windowWidth = windowGetWidth(win);
@@ -2090,13 +2195,13 @@ int _get_input_str2(int win, int doneKeyCode, int cancelKeyCode, char* descripti
 }
 
 // 0x47F48C
-int _DummyFunc(File* stream)
+static int _DummyFunc(File* stream)
 {
     return 0;
 }
 
 // 0x47F490
-int _PrepLoad(File* stream)
+static int _PrepLoad(File* stream)
 {
     gameReset();
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_PLANET);
@@ -2106,7 +2211,7 @@ int _PrepLoad(File* stream)
 }
 
 // 0x47F4C8
-int _EndLoad(File* stream)
+static int _EndLoad(File* stream)
 {
     worldmapStartMapMusic();
     dudeSetName(_LSData[_slot_cursor].character_name);
@@ -2120,7 +2225,7 @@ int _EndLoad(File* stream)
 }
 
 // 0x47F510
-int _GameMap2Slot(File* stream)
+static int _GameMap2Slot(File* stream)
 {
     if (_partyMemberPrepSave() == -1) {
         return -1;
@@ -2141,7 +2246,9 @@ int _GameMap2Slot(File* stream)
             continue;
         }
 
-        const char* critterItemPath = (pid >> 24) == OBJ_TYPE_CRITTER ? "PROTO\\CRITTERS" : "PROTO\\ITEMS";
+        const char* critterItemPath = (pid >> 24) == OBJ_TYPE_CRITTER
+            ? PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME
+            : PROTO_DIR_NAME "\\" ITEMS_DIR_NAME;
         sprintf(_str0, "%s\\%s\\%s", _patches, critterItemPath, path);
         sprintf(_str1, "%s\\%s\\%s%.2d\\%s\\%s", _patches, "SAVEGAME", "SLOT", _slot_cursor + 1, critterItemPath, path);
         if (fileCopyCompressed(_str0, _str1) == -1) {
@@ -2177,7 +2284,7 @@ int _GameMap2Slot(File* stream)
     sprintf(_gmpath, "%s\\%s\\%s%.2d\\", _patches, "SAVEGAME", "SLOT", _slot_cursor + 1);
     _strmfe(_str0, "AUTOMAP.DB", "SAV");
     strcat(_gmpath, _str0);
-    remove(_gmpath);
+    compat_remove(_gmpath);
 
     for (int index = 0; index < fileNameListLength; index += 1) {
         char* string = fileNameList[index];
@@ -2231,7 +2338,7 @@ int _GameMap2Slot(File* stream)
 
 // SlotMap2Game
 // 0x47F990
-int _SlotMap2Game(File* stream)
+static int _SlotMap2Game(File* stream)
 {
     debugPrint("LOADSAVE: in SlotMap2Game\n");
 
@@ -2246,15 +2353,15 @@ int _SlotMap2Game(File* stream)
         return -1;
     }
 
-    sprintf(_str0, "%s\\", "PROTO\\CRITTERS");
+    sprintf(_str0, "%s\\", PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME);
 
-    if (_MapDirErase(_str0, "PRO") == -1) {
+    if (_MapDirErase(_str0, PROTO_FILE_EXT) == -1) {
         debugPrint("LOADSAVE: returning 3\n");
         return -1;
     }
 
-    sprintf(_str0, "%s\\", "PROTO\\ITEMS");
-    if (_MapDirErase(_str0, "PRO") == -1) {
+    sprintf(_str0, "%s\\", PROTO_DIR_NAME "\\" ITEMS_DIR_NAME);
+    if (_MapDirErase(_str0, PROTO_FILE_EXT) == -1) {
         debugPrint("LOADSAVE: returning 4\n");
         return -1;
     }
@@ -2266,7 +2373,7 @@ int _SlotMap2Game(File* stream)
     }
 
     sprintf(_str0, "%s\\%s\\%s", _patches, "MAPS", "AUTOMAP.DB");
-    remove(_str0);
+    compat_remove(_str0);
 
     if (gPartyMemberDescriptionsLength > 1) {
         for (int index = 1; index < gPartyMemberDescriptionsLength; index += 1) {
@@ -2275,8 +2382,8 @@ int _SlotMap2Game(File* stream)
                 char protoPath[COMPAT_MAX_PATH];
                 if (_proto_list_str(pid, protoPath) == 0) {
                     const char* basePath = pid >> 24 == OBJ_TYPE_CRITTER
-                        ? "PROTO\\CRITTERS"
-                        : "PROTO\\ITEMS";
+                        ? PROTO_DIR_NAME "\\" CRITTERS_DIR_NAME
+                        : PROTO_DIR_NAME "\\" ITEMS_DIR_NAME;
                     sprintf(_str0, "%s\\%s\\%s", _patches, basePath, protoPath);
                     sprintf(_str1, "%s\\%s\\%s%.2d\\%s\\%s", _patches, "SAVEGAME", "SLOT", _slot_cursor + 1, basePath, protoPath);
 
@@ -2331,7 +2438,7 @@ int _SlotMap2Game(File* stream)
 }
 
 // 0x47FE14
-int _mygets(char* dest, File* stream)
+static int _mygets(char* dest, File* stream)
 {
     int index = 14;
     while (true) {
@@ -2358,7 +2465,7 @@ int _mygets(char* dest, File* stream)
 }
 
 // 0x47FE58
-int _copy_file(const char* a1, const char* a2)
+static int _copy_file(const char* a1, const char* a2)
 {
     File* stream1;
     File* stream2;
@@ -2439,7 +2546,7 @@ void lsgInit()
 }
 
 // 0x480040
-int _MapDirErase(const char* relativePath, const char* extension)
+static int _MapDirErase(const char* relativePath, const char* extension)
 {
     char path[COMPAT_MAX_PATH];
     sprintf(path, "%s*.%s", relativePath, extension);
@@ -2448,7 +2555,7 @@ int _MapDirErase(const char* relativePath, const char* extension)
     int fileListLength = fileNameListInit(path, &fileList, 0, 0);
     while (--fileListLength >= 0) {
         sprintf(path, "%s\\%s%s", _patches, relativePath, fileList[fileListLength]);
-        remove(path);
+        compat_remove(path);
     }
     fileNameListFree(&fileList, 0);
 
@@ -2461,7 +2568,7 @@ int _MapDirEraseFile_(const char* a1, const char* a2)
     char path[COMPAT_MAX_PATH];
 
     sprintf(path, "%s\\%s%s", _patches, a1, a2);
-    if (remove(path) != 0) {
+    if (compat_remove(path) != 0) {
         return -1;
     }
 
@@ -2469,7 +2576,7 @@ int _MapDirEraseFile_(const char* a1, const char* a2)
 }
 
 // 0x480104
-int _SaveBackup()
+static int _SaveBackup()
 {
     debugPrint("\nLOADSAVE: Backing up save slot files..\n");
 
@@ -2483,7 +2590,7 @@ int _SaveBackup()
     File* stream1 = fileOpen(_str0, "rb");
     if (stream1 != NULL) {
         fileClose(stream1);
-        if (rename(_str0, _str1) != 0) {
+        if (compat_rename(_str0, _str1) != 0) {
             return -1;
         }
     }
@@ -2505,7 +2612,7 @@ int _SaveBackup()
         strcat(_str0, fileList[index]);
 
         _strmfe(_str1, _str0, "BAK");
-        if (rename(_str0, _str1) != 0) {
+        if (compat_rename(_str0, _str1) != 0) {
             fileNameListFree(&fileList, 0);
             return -1;
         }
@@ -2540,7 +2647,7 @@ int _SaveBackup()
 }
 
 // 0x4803D8
-int _RestoreSave()
+static int _RestoreSave()
 {
     debugPrint("\nLOADSAVE: Restoring save file backup...\n");
 
@@ -2550,9 +2657,9 @@ int _RestoreSave()
     strcpy(_str0, _gmpath);
     strcat(_str0, "SAVE.DAT");
     _strmfe(_str1, _str0, "BAK");
-    remove(_str0);
+    compat_remove(_str0);
 
-    if (rename(_str1, _str0) != 0) {
+    if (compat_rename(_str1, _str0) != 0) {
         _EraseSave();
         return -1;
     }
@@ -2578,8 +2685,8 @@ int _RestoreSave()
         strcpy(_str0, _gmpath);
         strcat(_str0, fileList[index]);
         _strmfe(_str1, _str0, "SAV");
-        remove(_str1);
-        if (rename(_str0, _str1) != 0) {
+        compat_remove(_str1);
+        if (compat_rename(_str0, _str1) != 0) {
             // FIXME: Probably leaks fileList.
             _EraseSave();
             return -1;
@@ -2601,7 +2708,7 @@ int _RestoreSave()
     strcpy(_str1, _gmpath);
     strcat(_str1, v2);
 
-    if (rename(_str0, _str1) != 0) {
+    if (compat_rename(_str0, _str1) != 0) {
         _EraseSave();
         return -1;
     }
@@ -2610,7 +2717,7 @@ int _RestoreSave()
 }
 
 // 0x480710
-int _LoadObjDudeCid(File* stream)
+static int _LoadObjDudeCid(File* stream)
 {
     int value;
 
@@ -2624,20 +2731,20 @@ int _LoadObjDudeCid(File* stream)
 }
 
 // 0x480734
-int _SaveObjDudeCid(File* stream)
+static int _SaveObjDudeCid(File* stream)
 {
     return fileWriteInt32(stream, gDude->cid);
 }
 
 // 0x480754
-int _EraseSave()
+static int _EraseSave()
 {
     debugPrint("\nLOADSAVE: Erasing save(bad) slot...\n");
 
     sprintf(_gmpath, "%s\\%s\\%s%.2d\\", _patches, "SAVEGAME", "SLOT", _slot_cursor + 1);
     strcpy(_str0, _gmpath);
     strcat(_str0, "SAVE.DAT");
-    remove(_str0);
+    compat_remove(_str0);
 
     sprintf(_gmpath, "%s\\%s%.2d\\", "SAVEGAME", "SLOT", _slot_cursor + 1);
     sprintf(_str0, "%s*.%s", _gmpath, "SAV");
@@ -2652,7 +2759,7 @@ int _EraseSave()
     for (int index = fileListLength - 1; index >= 0; index--) {
         strcpy(_str0, _gmpath);
         strcat(_str0, fileList[index]);
-        remove(_str0);
+        compat_remove(_str0);
     }
 
     fileNameListFree(&fileList, 0);
@@ -2663,7 +2770,7 @@ int _EraseSave()
     strcpy(_str0, _gmpath);
     strcat(_str0, v1);
 
-    remove(_str0);
+    compat_remove(_str0);
 
     return 0;
 }

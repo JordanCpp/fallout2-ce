@@ -1,5 +1,6 @@
 #include "stat.h"
 
+#include "art.h"
 #include "combat.h"
 #include "core.h"
 #include "critter.h"
@@ -9,7 +10,9 @@
 #include "interface.h"
 #include "item.h"
 #include "memory.h"
+#include "message.h"
 #include "object.h"
+#include "party_member.h"
 #include "perk.h"
 #include "platform_compat.h"
 #include "proto.h"
@@ -23,8 +26,18 @@
 
 #include <algorithm>
 
+// Provides metadata about stats.
+typedef struct StatDescription {
+    char* name;
+    char* description;
+    int frmId;
+    int minimumValue;
+    int maximumValue;
+    int defaultValue;
+} StatDescription;
+
 // 0x51D53C
-StatDescription gStatDescriptions[STAT_COUNT] = {
+static StatDescription gStatDescriptions[STAT_COUNT] = {
     { NULL, NULL, 0, PRIMARY_STAT_MIN, PRIMARY_STAT_MAX, 5 },
     { NULL, NULL, 1, PRIMARY_STAT_MIN, PRIMARY_STAT_MAX, 5 },
     { NULL, NULL, 2, PRIMARY_STAT_MIN, PRIMARY_STAT_MAX, 5 },
@@ -66,7 +79,7 @@ StatDescription gStatDescriptions[STAT_COUNT] = {
 };
 
 // 0x51D8CC
-StatDescription gPcStatDescriptions[PC_STAT_COUNT] = {
+static StatDescription gPcStatDescriptions[PC_STAT_COUNT] = {
     { NULL, NULL, 0, 0, INT_MAX, 0 },
     { NULL, NULL, 0, 1, PC_LEVEL_MAX, 1 },
     { NULL, NULL, 0, 0, INT_MAX, 0 },
@@ -75,13 +88,13 @@ StatDescription gPcStatDescriptions[PC_STAT_COUNT] = {
 };
 
 // 0x66817C
-MessageList gStatsMessageList;
+static MessageList gStatsMessageList;
 
 // 0x668184
-char* gStatValueDescriptions[PRIMARY_STAT_RANGE];
+static char* gStatValueDescriptions[PRIMARY_STAT_RANGE];
 
 // 0x6681AC
-int gPcStatValues[PC_STAT_COUNT];
+static int gPcStatValues[PC_STAT_COUNT];
 
 // 0x4AED70
 int statsInit()

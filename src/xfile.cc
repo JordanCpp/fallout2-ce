@@ -12,11 +12,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum XFileEnumerationEntryType {
+    XFILE_ENUMERATION_ENTRY_TYPE_FILE,
+    XFILE_ENUMERATION_ENTRY_TYPE_DIRECTORY,
+    XFILE_ENUMERATION_ENTRY_TYPE_DFILE,
+} XFileEnumerationEntryType;
+
+typedef struct XListEnumerationContext {
+    char name[COMPAT_MAX_PATH];
+    unsigned char type;
+    XList* xlist;
+} XListEnumerationContext;
+
+typedef bool(XListEnumerationHandler)(XListEnumerationContext* context);
+
+static bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList* xlist);
+static int xbaseMakeDirectory(const char* path);
+static void xbaseCloseAll();
+static void xbaseExitHandler(void);
+static bool xlistEnumerateHandler(XListEnumerationContext* context);
+
 // 0x6B24D0
-XBase* gXbaseHead;
+static XBase* gXbaseHead;
 
 // 0x6B24D4
-bool gXbaseExitHandlerRegistered;
+static bool gXbaseExitHandlerRegistered;
 
 // 0x4DED6C
 int xfileClose(XFile* stream)
@@ -65,7 +85,7 @@ XFile* xfileOpen(const char* filePath, const char* mode)
     char path[COMPAT_MAX_PATH];
     if (drive[0] != '\0' || dir[0] == '\\' || dir[0] == '/' || dir[0] == '.') {
         // [filePath] is an absolute path. Attempt to open as plain stream.
-        stream->file = fopen(filePath, mode);
+        stream->file = compat_fopen(filePath, mode);
         if (stream->file == NULL) {
             free(stream);
             return NULL;
@@ -91,7 +111,7 @@ XFile* xfileOpen(const char* filePath, const char* mode)
                 sprintf(path, "%s\\%s", curr->path, filePath);
 
                 // Attempt to open plain stream.
-                stream->file = fopen(path, mode);
+                stream->file = compat_fopen(path, mode);
                 if (stream->file != NULL) {
                     stream->type = XFILE_TYPE_FILE;
                     break;
@@ -103,7 +123,7 @@ XFile* xfileOpen(const char* filePath, const char* mode)
         if (stream->file == NULL) {
             // File was not opened during the loop above. Attempt to open file
             // relative to the current working directory.
-            stream->file = fopen(filePath, mode);
+            stream->file = compat_fopen(filePath, mode);
             if (stream->file == NULL) {
                 free(stream);
                 return NULL;
@@ -125,7 +145,7 @@ XFile* xfileOpen(const char* filePath, const char* mode)
             fclose(stream->file);
 
             stream->type = XFILE_TYPE_GZFILE;
-            stream->gzfile = gzopen(path, mode);
+            stream->gzfile = compat_gzopen(path, mode);
         } else {
             // File is not gzipped.
             rewind(stream->file);
@@ -534,7 +554,7 @@ bool xbaseOpen(const char* path)
 }
 
 // 0x4DFB3C
-bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList* xlist)
+static bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList* xlist)
 {
     assert(pattern); // "filespec", "xfile.c", 845
     assert(handler); // "enumfunc", "xfile.c", 846
@@ -544,13 +564,17 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
 
     context.xlist = xlist;
 
+    char nativePattern[COMPAT_MAX_PATH];
+    strcpy(nativePattern, pattern);
+    compat_windows_path_to_native(nativePattern);
+
     char drive[COMPAT_MAX_DRIVE];
     char dir[COMPAT_MAX_DIR];
     char fileName[COMPAT_MAX_FNAME];
     char extension[COMPAT_MAX_EXT];
-    compat_splitpath(pattern, drive, dir, fileName, extension);
+    compat_splitpath(nativePattern, drive, dir, fileName, extension);
     if (drive[0] != '\0' || dir[0] == '\\' || dir[0] == '/' || dir[0] == '.') {
-        if (fileFindFirst(pattern, &directoryFileFindData)) {
+        if (fileFindFirst(nativePattern, &directoryFileFindData)) {
             do {
                 bool isDirectory = fileFindIsDirectory(&directoryFileFindData);
                 char* entryName = fileFindGetName(&directoryFileFindData);
@@ -594,6 +618,7 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
         } else {
             char path[COMPAT_MAX_PATH];
             sprintf(path, "%s\\%s", xbase->path, pattern);
+            compat_windows_path_to_native(path);
 
             if (fileFindFirst(path, &directoryFileFindData)) {
                 do {
@@ -622,8 +647,8 @@ bool xlistEnumerate(const char* pattern, XListEnumerationHandler* handler, XList
         xbase = xbase->next;
     }
 
-    compat_splitpath(pattern, drive, dir, fileName, extension);
-    if (fileFindFirst(pattern, &directoryFileFindData)) {
+    compat_splitpath(nativePattern, drive, dir, fileName, extension);
+    if (fileFindFirst(nativePattern, &directoryFileFindData)) {
         do {
             bool isDirectory = fileFindIsDirectory(&directoryFileFindData);
             char* entryName = fileFindGetName(&directoryFileFindData);
@@ -674,7 +699,7 @@ void xlistFree(XList* xlist)
 // Recursively creates specified file path.
 //
 // 0x4DFFAC
-int xbaseMakeDirectory(const char* filePath)
+static int xbaseMakeDirectory(const char* filePath)
 {
     char workingDirectory[COMPAT_MAX_PATH];
     if (getcwd(workingDirectory, COMPAT_MAX_PATH) == NULL) {
@@ -745,7 +770,7 @@ int xbaseMakeDirectory(const char* filePath)
 // NOTE: Inlined.
 //
 // 0x4E01F8
-void xbaseCloseAll()
+static void xbaseCloseAll()
 {
     XBase* curr = gXbaseHead;
     gXbaseHead = NULL;
@@ -765,14 +790,14 @@ void xbaseCloseAll()
 }
 
 // xbase atexit
-void xbaseExitHandler(void)
+static void xbaseExitHandler(void)
 {
     // NOTE: Uninline.
     xbaseCloseAll();
 }
 
 // 0x4E0278
-bool xlistEnumerateHandler(XListEnumerationContext* context)
+static bool xlistEnumerateHandler(XListEnumerationContext* context)
 {
     if (context->type == XFILE_ENUMERATION_ENTRY_TYPE_DIRECTORY) {
         return true;

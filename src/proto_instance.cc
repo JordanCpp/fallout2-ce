@@ -1,6 +1,7 @@
 #include "proto_instance.h"
 
 #include "animation.h"
+#include "art.h"
 #include "color.h"
 #include "combat.h"
 #include "critter.h"
@@ -12,6 +13,7 @@
 #include "interface.h"
 #include "item.h"
 #include "map.h"
+#include "message.h"
 #include "object.h"
 #include "palette.h"
 #include "perk.h"
@@ -26,10 +28,31 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+static int _obj_remove_from_inven(Object* critter, Object* item);
+static int _obj_use_book(Object* item_obj);
+static int _obj_use_flare(Object* critter_obj, Object* item_obj);
+static int _obj_use_radio(Object* item_obj);
+static int _obj_use_explosive(Object* explosive);
+static int _obj_use_power_on_car(Object* ammo);
+static int _obj_use_misc_item(Object* item_obj);
+static int _protinstTestDroppedExplosive(Object* a1);
+static int _protinst_default_use_item(Object* a1, Object* a2, Object* item);
+static int useLadderDown(Object* a1, Object* ladder, int a3);
+static int useLadderUp(Object* a1, Object* ladder, int a3);
+static int useStairs(Object* a1, Object* stairs, int a3);
+static int _set_door_state_open(Object* a1, Object* a2);
+static int _set_door_state_closed(Object* a1, Object* a2);
+static int _check_door_state(Object* a1, Object* a2);
+static bool _obj_is_lockable(Object* obj);
+static bool _obj_is_openable(Object* obj);
+static int objectOpenClose(Object* obj);
+static bool objectIsJammed(Object* obj);
+
 // 0x49A990
-MessageListItem stru_49A990;
+static MessageListItem stru_49A990;
 
 // 0x49A9A0
 int _obj_sid(Object* object, int* sidPtr)
@@ -567,7 +590,7 @@ int _obj_pickup(Object* critter, Object* item)
 }
 
 // 0x49B73C
-int _obj_remove_from_inven(Object* critter, Object* item)
+static int _obj_remove_from_inven(Object* critter, Object* item)
 {
     Rect updatedRect;
     int fid;
@@ -700,7 +723,7 @@ int _obj_destroy(Object* obj)
 // Read a book.
 //
 // 0x49B9F0
-int _obj_use_book(Object* book)
+static int _obj_use_book(Object* book)
 {
     MessageListItem messageListItem;
 
@@ -788,7 +811,7 @@ int _obj_use_book(Object* book)
 // Light a flare.
 //
 // 0x49BBA8
-int _obj_use_flare(Object* critter_obj, Object* flare)
+static int _obj_use_flare(Object* critter_obj, Object* flare)
 {
     MessageListItem messageListItem;
 
@@ -823,7 +846,7 @@ int _obj_use_flare(Object* critter_obj, Object* flare)
 }
 
 // 0x49BC60
-int _obj_use_radio(Object* item)
+static int _obj_use_radio(Object* item)
 {
     Script* scr;
 
@@ -842,7 +865,7 @@ int _obj_use_radio(Object* item)
 }
 
 // 0x49BCB4
-int _obj_use_explosive(Object* explosive)
+static int _obj_use_explosive(Object* explosive)
 {
     MessageListItem messageListItem;
 
@@ -911,7 +934,7 @@ int _obj_use_explosive(Object* explosive)
 // Returns 1 when car is recharged.
 //
 // 0x49BDE8
-int _obj_use_power_on_car(Object* item)
+static int _obj_use_power_on_car(Object* item)
 {
     MessageListItem messageListItem;
     int messageNum;
@@ -959,7 +982,7 @@ int _obj_use_power_on_car(Object* item)
 }
 
 // 0x49BE88
-int _obj_use_misc_item(Object* item)
+static int _obj_use_misc_item(Object* item)
 {
 
     if (item == NULL) {
@@ -1050,7 +1073,7 @@ int _protinst_use_item(Object* critter, Object* item)
 }
 
 // 0x49BFE8
-int _protinstTestDroppedExplosive(Object* a1)
+static int _protinstTestDroppedExplosive(Object* a1)
 {
     if (a1->pid == PROTO_ID_DYNAMITE_II || a1->pid == PROTO_ID_PLASTIC_EXPLOSIVES_II) {
         Attack attack;
@@ -1134,7 +1157,7 @@ int _obj_use_item(Object* a1, Object* a2)
 }
 
 // 0x49C240
-int _protinst_default_use_item(Object* a1, Object* a2, Object* item)
+static int _protinst_default_use_item(Object* a1, Object* a2, Object* item)
 {
     char formattedText[90];
     MessageListItem messageListItem;
@@ -1473,7 +1496,7 @@ int _obj_use(Object* a1, Object* a2)
 }
 
 // 0x49C900
-int useLadderDown(Object* a1, Object* ladder, int a3)
+static int useLadderDown(Object* a1, Object* ladder, int a3)
 {
     int builtTile = ladder->data.scenery.ladder.field_4;
     if (builtTile == -1) {
@@ -1507,7 +1530,7 @@ int useLadderDown(Object* a1, Object* ladder, int a3)
 }
 
 // 0x49C9A4
-int useLadderUp(Object* a1, Object* ladder, int a3)
+static int useLadderUp(Object* a1, Object* ladder, int a3)
 {
     int builtTile = ladder->data.scenery.ladder.field_4;
     if (builtTile == -1) {
@@ -1541,7 +1564,7 @@ int useLadderUp(Object* a1, Object* ladder, int a3)
 }
 
 // 0x49CA48
-int useStairs(Object* a1, Object* stairs, int a3)
+static int useStairs(Object* a1, Object* stairs, int a3)
 {
     int builtTile = stairs->data.scenery.stairs.field_4;
     if (builtTile == -1) {
@@ -1575,21 +1598,21 @@ int useStairs(Object* a1, Object* stairs, int a3)
 }
 
 // 0x49CAF4
-int _set_door_state_open(Object* a1, Object* a2)
+static int _set_door_state_open(Object* a1, Object* a2)
 {
     a1->data.scenery.door.openFlags |= 0x01;
     return 0;
 }
 
 // 0x49CB04
-int _set_door_state_closed(Object* a1, Object* a2)
+static int _set_door_state_closed(Object* a1, Object* a2)
 {
     a1->data.scenery.door.openFlags &= ~0x01;
     return 0;
 }
 
 // 0x49CB14
-int _check_door_state(Object* a1, Object* a2)
+static int _check_door_state(Object* a1, Object* a2)
 {
     if ((a1->data.scenery.door.openFlags & 0x01) == 0) {
         a1->flags &= ~OBJECT_OPEN_DOOR;
@@ -1867,7 +1890,7 @@ int _obj_use_skill_on(Object* source, Object* target, int skill)
 }
 
 // 0x49D178
-bool _obj_is_lockable(Object* obj)
+static bool _obj_is_lockable(Object* obj)
 {
     Proto* proto;
 
@@ -1954,7 +1977,7 @@ int objectUnlock(Object* object)
 }
 
 // 0x49D294
-bool _obj_is_openable(Object* obj)
+static bool _obj_is_openable(Object* obj)
 {
     Proto* proto;
 
@@ -1989,7 +2012,7 @@ int objectIsOpen(Object* object)
 }
 
 // 0x49D2F4
-int objectOpenClose(Object* obj)
+static int objectOpenClose(Object* obj)
 {
     if (obj == NULL) {
         return -1;
@@ -2050,7 +2073,7 @@ int objectClose(Object* obj)
 }
 
 // 0x49D410
-bool objectIsJammed(Object* obj)
+static bool objectIsJammed(Object* obj)
 {
     if (!_obj_is_lockable(obj)) {
         return false;
