@@ -233,7 +233,8 @@ add_executable(${EXECUTABLE_NAME} WIN32 MACOSX_BUNDLE
 )
 
 target_sources(${EXECUTABLE_NAME} PUBLIC
-    "src/dsound_compat.h"
+    "src/audio_engine.cc"
+    "src/audio_engine.h"
     "src/fps_limiter.cc"
     "src/fps_limiter.h"
     "src/platform_compat.cc"
@@ -295,6 +296,13 @@ if(APPLE)
         fixup_bundle(${CMAKE_BINARY_DIR}/${MACOSX_BUNDLE_BUNDLE_NAME}.app \"\" \"\")
         "
         COMPONENT Runtime)
+
+    if (CPACK_BUNDLE_APPLE_CERT_APP)
+        install(CODE "
+            execute_process(COMMAND codesign --deep --force --options runtime --sign \"${CPACK_BUNDLE_APPLE_CERT_APP}\" ${CMAKE_BINARY_DIR}/${MACOSX_BUNDLE_BUNDLE_NAME}.app)
+            "
+            COMPONENT Runtime)
+    endif()
 
     set(CPACK_GENERATOR "DragNDrop")
     set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
