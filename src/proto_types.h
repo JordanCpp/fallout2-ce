@@ -122,6 +122,11 @@ enum {
     KILL_TYPE_GIANT_ANT,
     KILL_TYPE_BIG_BAD_BOSS,
     KILL_TYPE_COUNT,
+
+    // Sfall has the option to treat kill type numbers as shorts, thus doubling
+    // number of kill types it can deal with without breaking backwards
+    // compatibility.
+    SFALL_KILL_TYPE_COUNT = KILL_TYPE_COUNT * 2,
 };
 
 enum {
@@ -362,8 +367,8 @@ typedef struct {
 } SceneryProtoStairsData;
 
 typedef struct {
-    int field_0; // d.lower_tile
-    int field_4; // d.upper_tile
+    int type;
+    int level;
 } SceneryProtoElevatorData;
 
 typedef struct {

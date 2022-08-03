@@ -22,6 +22,7 @@
 #include "proto_instance.h"
 #include "queue.h"
 #include "random.h"
+#include "sfall_config.h"
 #include "skill.h"
 #include "stat.h"
 #include "tile.h"
@@ -29,7 +30,13 @@
 
 #include <string.h>
 
+#include <vector>
+
 #define ADDICTION_COUNT (9)
+
+// Max number of books that can be loaded from books.ini. This limit is imposed
+// by Sfall.
+#define BOOKS_MAX 50
 
 static int _item_load_(File* stream);
 static void _item_compact(int inventoryItemIndex, Inventory* inventory);
@@ -49,11 +56,23 @@ static void dudeSetAddiction(int drugPid);
 static void dudeClearAddiction(int drugPid);
 static bool dudeIsAddicted(int drugPid);
 
+static void booksInit();
+static void booksInitVanilla();
+static void booksInitCustom();
+static void booksAdd(int bookPid, int messageId, int skill);
+static void booksExit();
+
 typedef struct DrugDescription {
     int drugPid;
     int gvar;
     int field_8;
 } DrugDescription;
+
+typedef struct BookDescription {
+    int bookPid;
+    int messageId;
+    int skill;
+} BookDescription;
 
 // 0x509FFC
 static char _aItem_1[] = "<item>";
@@ -133,6 +152,8 @@ static Object* _wd_obj;
 // 0x59E990
 static int _wd_gvar;
 
+static std::vector<BookDescription> gBooks;
+
 // 0x4770E0
 int itemsInit()
 {
@@ -147,6 +168,9 @@ int itemsInit()
         return -1;
     }
 
+    // SFALL
+    booksInit();
+
     return 0;
 }
 
@@ -160,6 +184,9 @@ void itemsReset()
 void itemsExit()
 {
     messageListFree(&gItemsMessageList);
+
+    // SFALL
+    booksExit();
 }
 
 // NOTE: Collapsed.
@@ -189,7 +216,7 @@ int itemAttemptAdd(Object* owner, Object* itemToAdd, int quantity)
         return -1;
     }
 
-    int parentType = (owner->fid & 0xF000000) >> 24;
+    int parentType = FID_TYPE(owner->fid);
     if (parentType == OBJ_TYPE_ITEM) {
         int itemType = itemGetType(owner);
         if (itemType == ITEM_TYPE_CONTAINER) {
@@ -205,7 +232,7 @@ int itemAttemptAdd(Object* owner, Object* itemToAdd, int quantity)
 
             Object* containerOwner = objectGetOwner(owner);
             if (containerOwner != NULL) {
-                if (((containerOwner->fid & 0xF000000) >> 24) == OBJ_TYPE_CRITTER) {
+                if (FID_TYPE(containerOwner->fid) == OBJ_TYPE_CRITTER) {
                     int weightToAdd = itemGetWeight(itemToAdd);
                     weightToAdd *= quantity;
 
@@ -473,7 +500,7 @@ int _item_move_all_hidden(Object* a1, Object* a2)
         for (int j = i; j < inventory->length;) {
             bool v5;
             InventoryItem* inventoryItem = &(inventory->items[j]);
-            if (inventoryItem->item->pid >> 24 == OBJ_TYPE_ITEM) {
+            if (PID_TYPE(inventoryItem->item->pid) == OBJ_TYPE_ITEM) {
                 Proto* proto;
                 if (protoGetProto(inventoryItem->item->pid, &proto) != -1) {
                     v5 = (proto->item.extendedFlags & ItemProtoExtendedFlags_NaturalWeapon) == 0;
@@ -505,7 +532,7 @@ int _item_destroy_all_hidden(Object* a1)
         for (int j = i; j < inventory->length;) {
             bool v5;
             InventoryItem* inventoryItem = &(inventory->items[j]);
-            if (inventoryItem->item->pid >> 24 == OBJ_TYPE_ITEM) {
+            if (PID_TYPE(inventoryItem->item->pid) == OBJ_TYPE_ITEM) {
                 Proto* proto;
                 if (protoGetProto(inventoryItem->item->pid, &proto) != -1) {
                     v5 = (proto->item.extendedFlags & ItemProtoExtendedFlags_NaturalWeapon) == 0;
@@ -584,9 +611,9 @@ int _item_drop_all(Object* critter, int tile)
 
     if (hasEquippedItems) {
         Rect updatedRect;
-        int fid = buildFid(1, frmId, (critter->fid & 0xFF0000) >> 16, 0, (critter->fid & 0x70000000) >> 28);
+        int fid = buildFid(OBJ_TYPE_CRITTER, frmId, FID_ANIM_TYPE(critter->fid), 0, (critter->fid & 0x70000000) >> 28);
         objectSetFid(critter, fid, &updatedRect);
-        if (((critter->fid & 0xFF0000) >> 16) == 0) {
+        if (FID_ANIM_TYPE(critter->fid) == ANIM_STAND) {
             tileWindowRefreshRect(&updatedRect, gElevation);
         }
     }
@@ -667,7 +694,7 @@ int itemGetType(Object* item)
         return ITEM_TYPE_MISC;
     }
 
-    if ((item->pid >> 24) != OBJ_TYPE_ITEM) {
+    if (PID_TYPE(item->pid) != OBJ_TYPE_ITEM) {
         return ITEM_TYPE_MISC;
     }
 
@@ -845,7 +872,7 @@ int objectGetCost(Object* obj)
         }
     }
 
-    if ((obj->fid & 0xF000000) >> 24 == OBJ_TYPE_CRITTER) {
+    if (FID_TYPE(obj->fid) == OBJ_TYPE_CRITTER) {
         Object* item2 = critterGetItem2(obj);
         if (item2 != NULL && (item2->flags & OBJECT_IN_RIGHT_HAND) == 0) {
             cost += itemGetCost(item2);
@@ -883,7 +910,7 @@ int objectGetInventoryWeight(Object* obj)
         weight += itemGetWeight(item) * inventoryItem->quantity;
     }
 
-    if (((obj->fid & 0xF000000) >> 24) == OBJ_TYPE_CRITTER) {
+    if (FID_TYPE(obj->fid) == OBJ_TYPE_CRITTER) {
         Object* item2 = critterGetItem2(obj);
         if (item2 != NULL) {
             if ((item2->flags & OBJECT_IN_RIGHT_HAND) == 0) {
@@ -1088,7 +1115,7 @@ int weaponIsNatural(Object* obj)
 {
     Proto* proto;
 
-    if ((obj->pid >> 24) != OBJ_TYPE_ITEM) {
+    if (PID_TYPE(obj->pid) != OBJ_TYPE_ITEM) {
         return 0;
     }
 
@@ -1590,7 +1617,7 @@ int _item_w_range(Object* critter, int hitMode)
         return range;
     }
 
-    if (_critter_flag_check(critter->pid, 0x2000)) {
+    if (_critter_flag_check(critter->pid, CRITTER_FLAG_0x2000)) {
         return 2;
     }
 
@@ -1942,14 +1969,10 @@ int _item_w_compute_ammo_cost(Object* obj, int* inout_a2)
     return 0;
 }
 
-// Returns true if weapon's damage is explosion, plasma, or emp.
-// Probably checks if weapon is granade.
-//
 // 0x4790E8
-bool _item_w_is_grenade(Object* weapon)
+bool weaponIsGrenade(Object* weapon)
 {
     int damageType = weaponGetDamageType(NULL, weapon);
-
     return damageType == DAMAGE_TYPE_EXPLOSION || damageType == DAMAGE_TYPE_PLASMA || damageType == DAMAGE_TYPE_EMP;
 }
 
@@ -1968,7 +1991,7 @@ int _item_w_area_damage_radius(Object* weapon, int hitMode)
         }
     } else if (attackType == ATTACK_TYPE_THROW) {
         // NOTE: Uninline.
-        if (_item_w_is_grenade(weapon)) {
+        if (weaponIsGrenade(weapon)) {
             // NOTE: Uninline.
             v1 = _item_w_grenade_dmg_radius(weapon);
         }
@@ -2840,7 +2863,7 @@ int drugEffectEventProcess(Object* obj, void* data)
         return 0;
     }
 
-    if ((obj->pid >> 24) != OBJ_TYPE_CRITTER) {
+    if (PID_TYPE(obj->pid) != OBJ_TYPE_CRITTER) {
         return 0;
     }
 
@@ -3009,7 +3032,7 @@ int withdrawalEventWrite(File* stream, void* data)
 // 0x47A4C4
 static void performWithdrawalStart(Object* obj, int perk, int pid)
 {
-    if ((obj->pid >> 24) != OBJ_TYPE_CRITTER) {
+    if (PID_TYPE(obj->pid) != OBJ_TYPE_CRITTER) {
         debugPrint("\nERROR: perform_withdrawal_start: Was called on non-critter!");
         return;
     }
@@ -3039,7 +3062,7 @@ static void performWithdrawalStart(Object* obj, int perk, int pid)
 // 0x47A558
 static void performWithdrawalEnd(Object* obj, int perk)
 {
-    if ((obj->pid >> 24) != OBJ_TYPE_CRITTER) {
+    if (PID_TYPE(obj->pid) != OBJ_TYPE_CRITTER) {
         debugPrint("\nERROR: perform_withdrawal_end: Was called on non-critter!");
         return;
     }
@@ -3232,4 +3255,101 @@ int itemSetMoney(Object* item, int amount)
     item->data.item.misc.charges = amount;
 
     return 0;
+}
+
+static void booksInit()
+{
+    booksInitVanilla();
+    booksInitCustom();
+}
+
+static void booksExit()
+{
+    gBooks.clear();
+}
+
+static void booksInitVanilla()
+{
+    // 802: You learn new science information.
+    booksAdd(PROTO_ID_BIG_BOOK_OF_SCIENCE, 802, SKILL_SCIENCE);
+
+    // 803: You learn a lot about repairing broken electronics.
+    booksAdd(PROTO_ID_DEANS_ELECTRONICS, 803, SKILL_REPAIR);
+
+    // 804: You learn new ways to heal injury.
+    booksAdd(PROTO_ID_FIRST_AID_BOOK, 804, SKILL_FIRST_AID);
+
+    // 805: You learn how to handle your guns better.
+    booksAdd(PROTO_ID_GUNS_AND_BULLETS, 805, SKILL_SMALL_GUNS);
+
+    // 806: You learn a lot about wilderness survival.
+    booksAdd(PROTO_ID_SCOUT_HANDBOOK, 806, SKILL_OUTDOORSMAN);
+}
+
+static void booksInitCustom()
+{
+    char* booksFilePath;
+    configGetString(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_BOOKS_FILE_KEY, &booksFilePath);
+    if (booksFilePath != NULL && *booksFilePath == '\0') {
+        booksFilePath = NULL;
+    }
+
+    if (booksFilePath != NULL) {
+        Config booksConfig;
+        if (configInit(&booksConfig)) {
+            if (configRead(&booksConfig, booksFilePath, false)) {
+                bool overrideVanilla = false;
+                configGetBool(&booksConfig, "main", "overrideVanilla", &overrideVanilla);
+                if (overrideVanilla) {
+                    gBooks.clear();
+                }
+
+                int bookCount = 0;
+                configGetInt(&booksConfig, "main", "count", &bookCount);
+                if (bookCount > BOOKS_MAX) {
+                    bookCount = BOOKS_MAX;
+                }
+
+                char sectionKey[4];
+                for (int index = 0; index < bookCount; index++) {
+                    // Books numbering starts with 1.
+                    sprintf(sectionKey, "%d", index + 1);
+
+                    int bookPid;
+                    if (!configGetInt(&booksConfig, sectionKey, "PID", &bookPid)) continue;
+
+                    int messageId;
+                    if (!configGetInt(&booksConfig, sectionKey, "TextID", &messageId)) continue;
+
+                    int skill;
+                    if (!configGetInt(&booksConfig, sectionKey, "Skill", &skill)) continue;
+
+                    booksAdd(bookPid, messageId, skill);
+                }
+            }
+
+            configFree(&booksConfig);
+        }
+    }
+}
+
+static void booksAdd(int bookPid, int messageId, int skill)
+{
+    BookDescription bookDescription;
+    bookDescription.bookPid = bookPid;
+    bookDescription.messageId = messageId;
+    bookDescription.skill = skill;
+    gBooks.emplace_back(std::move(bookDescription));
+}
+
+bool booksGetInfo(int bookPid, int* messageIdPtr, int* skillPtr)
+{
+    for (auto& bookDescription : gBooks) {
+        if (bookDescription.bookPid == bookPid) {
+            *messageIdPtr = bookDescription.messageId;
+            *skillPtr = bookDescription.skill;
+            return true;
+        }
+    }
+    return false;
 }

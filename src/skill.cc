@@ -1032,7 +1032,7 @@ int skillsPerformStealing(Object* a1, Object* a2, Object* item, bool isPlanting)
         // -4% per item size
         stealModifier -= 4 * itemGetSize(item);
 
-        if (((a2->fid & 0xF000000) >> 24) == OBJ_TYPE_CRITTER) {
+        if (FID_TYPE(a2->fid) == OBJ_TYPE_CRITTER) {
             // check facing: -25% if face to face
             if (_is_hit_from_front(a1, a2)) {
                 stealModifier -= 25;
@@ -1064,7 +1064,7 @@ int skillsPerformStealing(Object* a1, Object* a2, Object* item, bool isPlanting)
         catchRoll = ROLL_SUCCESS;
     } else {
         int catchChance;
-        if ((a2->pid >> 24) == OBJ_TYPE_CRITTER) {
+        if (PID_TYPE(a2->pid) == OBJ_TYPE_CRITTER) {
             catchChance = skillGetValue(a2, SKILL_STEAL) - stealModifier;
         } else {
             catchChance = 30 - stealModifier;
@@ -1145,7 +1145,7 @@ static int skillGetFreeUsageSlot(int skill)
     }
 
     int time = gameTimeGetTime();
-    int hoursSinceLastUsage = (time - _timesSkillUsed[skill][SKILLS_MAX_USES_PER_DAY - 1]) / 36000;
+    int hoursSinceLastUsage = (time - _timesSkillUsed[skill][0]) / GAME_TIME_TICKS_PER_HOUR;
     if (hoursSinceLastUsage <= 24) {
         return -1;
     }
@@ -1162,7 +1162,7 @@ int skillUpdateLastUse(int skill)
     }
 
     if (_timesSkillUsed[skill][slot] != 0) {
-        for (int i = 0; i < slot - 1; i++) {
+        for (int i = 0; i < slot; i++) {
             _timesSkillUsed[skill][i] = _timesSkillUsed[skill][i + 1];
         }
     }

@@ -81,25 +81,20 @@ bool configParseCommandLineArguments(Config* config, int argc, char** argv)
     }
 
     for (int arg = 0; arg < argc; arg++) {
-        char* pch = argv[arg];
+        char* pch;
+        char* string = argv[arg];
 
         // Find opening bracket.
-        while (*pch != '\0' && *pch != '[') {
-            pch++;
-        }
-
-        if (*pch == '\0') {
+        pch = strchr(string, '[');
+        if (pch == NULL) {
             continue;
         }
 
         char* sectionKey = pch + 1;
 
         // Find closing bracket.
-        while (*pch != '\0' && *pch != ']') {
-            pch++;
-        }
-
-        if (*pch == '\0') {
+        pch = strchr(sectionKey, ']');
+        if (pch == NULL) {
             continue;
         }
 
@@ -188,8 +183,8 @@ bool configSetString(Config* config, const char* sectionKey, const char* key, co
     return true;
 }
 
-// 0x42C05C customized: atoi() replaced with strtol()
-bool configGetInt(Config* config, const char* sectionKey, const char* key, int* valuePtr, unsigned char base /* = 0 */ )
+// 0x42C05C
+bool configGetInt(Config* config, const char* sectionKey, const char* key, int* valuePtr, unsigned char base /* = 0 */)
 {
     if (valuePtr == NULL) {
         return false;
@@ -203,8 +198,17 @@ bool configGetInt(Config* config, const char* sectionKey, const char* key, int* 
     char* end;
     errno = 0;
     long l = strtol(stringValue, &end, base); // see https://stackoverflow.com/a/6154614
-    if (((errno == ERANGE && 1 == LONG_MAX) || l > INT_MAX) || ((errno == ERANGE && l == LONG_MIN) || l < INT_MIN) || (*stringValue == '\0' || *end != '\0'))
-        return false;
+
+    // The link above says right things about converting strings to numbers,
+    // however we need to maintain compatibility with atoi implementation and
+    // original game data. One example of the problem is worldmap.txt where
+    // frequency values expressed as percentages (Frequent=38%). If we handle
+    // the result like the link above suggests (and what previous implementation
+    // provided), we'll simply end up returning `false`, since there will be
+    // unconverted characters left. On the other hand, this function is also
+    // used to parse Sfall config values, which uses hexadecimal notation to
+    // represent colors. We're not going to need any of these in the long run so
+    // for now simply ignore any error that could arise during conversion.
 
     *valuePtr = l;
 
@@ -224,36 +228,30 @@ bool configGetIntList(Config* config, const char* sectionKey, const char* key, i
     }
 
     char temp[CONFIG_FILE_MAX_LINE_LENGTH];
-    strncpy(temp, string, CONFIG_FILE_MAX_LINE_LENGTH - 1);
+    string = strncpy(temp, string, CONFIG_FILE_MAX_LINE_LENGTH - 1);
 
-    char* beginning = temp;
-    char* pch = beginning;
-    while (*pch != '\0') {
-        if (*pch == ',') {
-            *pch = '\0';
-
-            *arr++ = atoi(beginning);
-
-            *pch = ',';
-
-            pch++;
-            beginning = pch;
-
-            count--;
-
-            if (count < 0) {
-                break;
-            }
+    while (1) {
+        char* pch = strchr(string, ',');
+        if (pch == NULL) {
+            break;
         }
 
-        pch++;
+        count--;
+        if (count == 0) {
+            break;
+        }
+
+        *pch = '\0';
+        *arr++ = atoi(string);
+        string = pch + 1;
     }
 
     if (count <= 1) {
-        *arr = atoi(beginning);
+        *arr = atoi(string);
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 // 0x42C160
@@ -374,30 +372,19 @@ static bool configParseLine(Config* config, char* string)
     char* pch;
 
     // Find comment marker and truncate the string.
-    pch = string;
-    while (*pch != '\0' && *pch != ';') {
-        pch++;
-    }
-
-    if (*pch != '\0') {
+    pch = strchr(string, ';');
+    if (pch != NULL) {
         *pch = '\0';
     }
 
     // Find opening bracket.
-    pch = string;
-    while (*pch != '\0' && *pch != '[') {
-        pch++;
-    }
-
-    if (*pch == '[') {
+    pch = strchr(string, '[');
+    if (pch != NULL) {
         char* sectionKey = pch + 1;
 
         // Find closing bracket.
-        while (*pch != '\0' && *pch != ']') {
-            pch++;
-        }
-
-        if (*pch == ']') {
+        pch = strchr(sectionKey, ']');
+        if (pch != NULL) {
             *pch = '\0';
             strcpy(gConfigLastSectionKey, sectionKey);
             return configTrimString(gConfigLastSectionKey);
@@ -426,12 +413,8 @@ static bool configParseKeyValue(char* string, char* key, char* value)
     }
 
     // Find equals character.
-    char* pch = string;
-    while (*pch != '\0' && *pch != '=') {
-        pch++;
-    }
-
-    if (*pch == '\0') {
+    char* pch = strchr(string, '=');
+    if (pch == NULL) {
         return false;
     }
 

@@ -22,6 +22,12 @@
 #define SFALL_CONFIG_KARMA_FRMS_KEY "KarmaFRMs"
 #define SFALL_CONFIG_KARMA_POINTS_KEY "KarmaPoints"
 #define SFALL_CONFIG_DISPLAY_KARMA_CHANGES_KEY "DisplayKarmaChanges"
+#define SFALL_CONFIG_OVERRIDE_CRITICALS_MODE_KEY "OverrideCriticalTable"
+#define SFALL_CONFIG_OVERRIDE_CRITICALS_FILE_KEY "OverrideCriticalFile"
+#define SFALL_CONFIG_REMOVE_CRITICALS_TIME_LIMITS_KEY "RemoveCriticalTimelimits"
+#define SFALL_CONFIG_BOOKS_FILE_KEY "BooksFile"
+#define SFALL_CONFIG_ELEVATORS_FILE_KEY "ElevatorsFile"
+#define SFALL_CONFIG_CONSOLE_OUTPUT_FILE_KEY "ConsoleOutputPath"
 
 extern bool gSfallConfigInitialized;
 extern Config gSfallConfig;

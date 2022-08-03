@@ -24,13 +24,25 @@ $ sudo apt install libsdl2-2.0-0
 
 ### macOS
 
-> **NOTE**: macOS 11 or higher is required. The app is not universal. It should run on Apple Silicon under Rosetta 2, but I haven't tried it.
+> **NOTE**: macOS 10.11 (El Capitan) or higher is required. Runs natively on Intel-based Macs and Apple Silicon.
 
 - Use Windows installation as a base - it contains data assets needed to play. Copy `Fallout2` folder somewhere, for example `/Applications/Fallout2`.
+
+- Alternatively you can use Fallout 2 from Macplay/The Omni Group as a base - you need to extract game assets from the original bundle. Mount CD/DMG, right click `Fallout 2` -> `Show Package Contents`, navigate to `Contents/Resources`. Copy `GameData` folder somewhere, for example `/Applications/Fallout2`.
 
 - Download and copy `fallout2-ce.app` to this folder.
 
 - Run `fallout2-ce.app`.
+
+### Android
+
+> **NOTE**: Fallout 2 was designed with mouse in mind. There are many controls that require precise cursor positioning, which is not possible with fingers. When playing on Android you'll use fingers to move mouse cursor, not a character, or a map. Double tap to "click" left mouse button in the current cursor position, triple tap to "click" right mouse button. It might feel awkward at first, but it's super handy - you can play with just a thumb. This is not set in stone and might change in the future.
+
+- Use Windows installation as a base - it contains data assets needed to play. Copy `Fallout2` folder to your device, for example to `Downloads`. You need `master.dat`, `critter.dat`, `patch000.dat`, and `data` folder.
+
+- Download `fallout2-ce.apk` and copy it to your device. Open it with file explorer, follow instructions (install from unknown source).
+
+- When you run the game for the first time it will immediately present file picker. Select the folder from the first step. Wait until this data is copied. There is no fancy importing interface (yet), just wait for about 30 seconds. The game will start automatically.
 
 ## Contributing
 

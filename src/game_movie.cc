@@ -176,7 +176,7 @@ int gameMoviePlay(int movie, int flags)
     int gameMovieWindowY = (screenGetHeight() - GAME_MOVIE_WINDOW_HEIGHT) / 2;
     int win = windowCreate(gameMovieWindowX,
         gameMovieWindowY,
-        GAME_MOVIE_WINDOW_WIDTH, 
+        GAME_MOVIE_WINDOW_WIDTH,
         GAME_MOVIE_WINDOW_HEIGHT,
         0,
         WINDOW_FLAG_0x10);
@@ -258,7 +258,7 @@ int gameMoviePlay(int movie, int flags)
         _mouse_get_raw_state(&x, &y, &buttons);
 
         v11 |= buttons;
-    } while ((v11 & 1) == 0 && (v11 & 2) == 0 || (buttons & 1) != 0 || (buttons & 2) != 0);
+    } while (((v11 & 1) == 0 && (v11 & 2) == 0) || (buttons & 1) != 0 || (buttons & 2) != 0);
 
     _movieStop();
     _moviefx_stop();

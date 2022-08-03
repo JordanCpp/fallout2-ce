@@ -39,6 +39,12 @@ int main(int argc, char* argv[])
     SDL_free(basePath);
 #endif
 
+#if __ANDROID__
+    SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    chdir(SDL_AndroidGetExternalStoragePath());
+#endif
+
     SDL_ShowCursor(SDL_DISABLE);
     gProgramIsActive = true;
     return falloutMain(argc, argv);
