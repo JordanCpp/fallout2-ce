@@ -2090,7 +2090,8 @@ int _obj_inven_free(Inventory* inventory)
 bool _obj_action_can_use(Object* obj)
 {
     int pid = obj->pid;
-    if (pid != PROTO_ID_LIT_FLARE && pid != PROTO_ID_DYNAMITE_II && pid != PROTO_ID_PLASTIC_EXPLOSIVES_II) {
+    // SFALL
+    if (pid != PROTO_ID_LIT_FLARE && !explosiveIsActiveExplosive(pid)) {
         return _proto_action_can_use(pid);
     } else {
         return false;
@@ -5220,4 +5221,17 @@ static int _obj_preload_sort(const void* a1, const void* a2)
 
     cmp = ((v1 & 0xFF0000) >> 16) - (((v2 & 0xFF0000) >> 16));
     return cmp;
+}
+
+Object* objectTypedFindById(int id, int type)
+{
+    Object* obj = objectFindFirst();
+    while (obj != NULL) {
+        if (obj->id == id && PID_TYPE(obj->pid) == type) {
+            return obj;
+        }
+        obj = objectFindNext();
+    }
+
+    return NULL;
 }

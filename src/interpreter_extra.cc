@@ -1746,7 +1746,7 @@ static void opWieldItem(Program* program)
 
     int hand = HAND_RIGHT;
 
-    bool v1 = false;
+    bool shouldAdjustArmorClass = false;
     Object* oldArmor = NULL;
     Object* newArmor = NULL;
     if (critter == gDude) {
@@ -1756,10 +1756,11 @@ static void opWieldItem(Program* program)
 
         if (itemGetType(item) == ITEM_TYPE_ARMOR) {
             oldArmor = critterGetArmor(gDude);
-        }
 
-        v1 = true;
-        newArmor = item;
+            // SFALL
+            shouldAdjustArmorClass = true;
+            newArmor = item;
+        }
     }
 
     if (_inven_wield(critter, item, hand) == -1) {
@@ -1769,8 +1770,11 @@ static void opWieldItem(Program* program)
     }
 
     if (critter == gDude) {
-        if (v1) {
+        if (shouldAdjustArmorClass) {
             _adjust_ac(critter, oldArmor, newArmor);
+
+            // SFALL
+            interfaceRenderArmorClass(false);
         }
 
         bool animated = !gameUiIsDisabled();
@@ -3099,7 +3103,11 @@ static void _op_inven_cmds(Program* program)
 static void opFloatMessage(Program* program)
 {
     int floatingMessageType = programStackPopInteger(program);
-    char* string = programStackPopString(program);
+    ProgramValue stringValue = programStackPopValue(program);
+    char* string = NULL;
+    if ((stringValue.opcode & VALUE_TYPE_MASK) == VALUE_TYPE_STRING) {
+        string = programGetString(program, stringValue.opcode, stringValue.integerValue);
+    }
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     int color = _colorTable[32747];
@@ -3336,9 +3344,25 @@ static void opMetarule(Program* program)
 // 0x4598BC
 static void opAnim(Program* program)
 {
-    int frame = programStackPopInteger(program);
+    ProgramValue frameValue = programStackPopValue(program);
     int anim = programStackPopInteger(program);
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
+
+    // CE: There is a bug in the `animate_rotation` macro in the user-space
+    // sсripts - instead of passing direction, it passes object. The direction
+    // argument is thrown away by preprocessor. Original code ignores this bug
+    // since there is no distiction between integers and pointers. In addition
+    // there is a guard in the code path below which simply ignores any value
+    // greater than 6 (so rotation does not change when pointer is passed).
+    int frame;
+    if (frameValue.opcode == VALUE_TYPE_INT) {
+        frame = frameValue.integerValue;
+    } else if (anim == 1000 && frameValue.opcode == VALUE_TYPE_PTR) {
+        // Force code path below to skip setting rotation.
+        frame = ROTATION_COUNT;
+    } else {
+        programFatalError("script error: %s: invalid arg 2 to anim", program->name);
+    }
 
     if (obj == NULL) {
         scriptPredefinedError(program, "anim", SCRIPT_ERROR_OBJECT_IS_NULL);
@@ -3580,7 +3604,8 @@ static void opAddMultipleObjectsToInventory(Program* program)
     if (quantity < 0) {
         quantity = 1;
     } else if (quantity > 99999) {
-        quantity = 500;
+        // SFALL
+        quantity = 99999;
     }
 
     if (itemAdd(object, item, quantity) == 0) {

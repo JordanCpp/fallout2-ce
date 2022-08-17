@@ -26,6 +26,7 @@
 #define MOUSE_EVENT_ANY_BUTTON_UP (MOUSE_EVENT_LEFT_BUTTON_UP | MOUSE_EVENT_RIGHT_BUTTON_UP)
 #define MOUSE_EVENT_LEFT_BUTTON_DOWN_REPEAT (MOUSE_EVENT_LEFT_BUTTON_DOWN | MOUSE_EVENT_LEFT_BUTTON_REPEAT)
 #define MOUSE_EVENT_RIGHT_BUTTON_DOWN_REPEAT (MOUSE_EVENT_RIGHT_BUTTON_DOWN | MOUSE_EVENT_RIGHT_BUTTON_REPEAT)
+#define MOUSE_EVENT_WHEEL 0x40
 
 #define BUTTON_REPEAT_TIME 250
 
@@ -413,7 +414,9 @@ typedef struct InputEvent {
     int mouseY;
 } InputEvent;
 
-typedef void TickerProc();
+typedef void(IdleFunc)();
+typedef void(FocusFunc)(bool focus);
+typedef void(TickerProc)();
 
 typedef struct TickerListNode {
     int flags;
@@ -460,8 +463,8 @@ typedef int(PauseHandler)();
 typedef int(ScreenshotHandler)(int width, int height, unsigned char* buffer, unsigned char* palette);
 typedef void(VcrPlaybackCompletionCallback)(int reason);
 
-extern void (*_idle_func)();
-extern void (*_focus_func)(int);
+extern IdleFunc* _idle_func;
+extern FocusFunc* _focus_func;
 extern int gKeyboardKeyRepeatRate;
 extern int gKeyboardKeyRepeatDelay;
 extern bool _keyboard_hooked;
@@ -595,6 +598,14 @@ void coreDelay(unsigned int ms);
 unsigned int getTicksSince(unsigned int a1);
 unsigned int getTicksBetween(unsigned int a1, unsigned int a2);
 unsigned int _get_bk_time();
+void inputSetKeyboardKeyRepeatRate(int value);
+int inputGetKeyboardKeyRepeatRate();
+void inputSetKeyboardKeyRepeatDelay(int value);
+int inputGetKeyboardKeyRepeatDelay();
+void inputSetFocusFunc(FocusFunc* func);
+FocusFunc* inputGetFocusFunc();
+void inputSetIdleFunc(IdleFunc* func);
+IdleFunc* inputGetIdleFunc();
 void buildNormalizedQwertyKeys();
 int _GNW95_input_init();
 void _GNW95_process_message();
@@ -682,5 +693,7 @@ int screenGetHeight();
 int screenGetVisibleHeight();
 void mouseGetPositionInWindow(int win, int* x, int* y);
 bool mouseHitTestInWindow(int win, int left, int top, int right, int bottom);
+void mouseGetWheel(int* x, int* y);
+void convertMouseWheelToArrowKey(int* keyCodePtr);
 
 #endif /* CORE_H */

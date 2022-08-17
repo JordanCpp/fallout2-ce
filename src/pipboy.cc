@@ -60,6 +60,7 @@
 #define PIPBOY_WINDOW_CONTENT_VIEW_HEIGHT (410)
 
 #define PIPBOY_IDLE_TIMEOUT (120000)
+#define PIPBOY_RAND_MAX (32767)
 
 #define PIPBOY_BOMB_COUNT (16)
 
@@ -186,7 +187,7 @@ typedef struct PipboyBomb {
 
 typedef void PipboyRenderProc(int a1);
 
-static int pipboyWindowInit(bool forceRest);
+static int pipboyWindowInit(int intent);
 static void pipboyWindowFree();
 static void _pip_init_();
 static void pipboyDrawNumber(int value, int digits, int x, int y);
@@ -347,6 +348,7 @@ int gPipboyWindow;
 // 0x6644C8
 CacheEntry* gPipboyFrmHandles[PIPBOY_FRM_COUNT];
 
+// 0x6644F4
 int _holodisk;
 
 // 0x6644F8
@@ -394,8 +396,10 @@ unsigned char _holo_flag;
 // 0x66452A
 unsigned char _stat_flag;
 
+static int gPipboyPrevTab;
+
 // 0x497004
-int pipboyOpen(bool forceRest)
+int pipboyOpen(int intent)
 {
     if (!_wmMapPipboyActive()) {
         // You aren't wearing the pipboy!
@@ -404,7 +408,8 @@ int pipboyOpen(bool forceRest)
         return 0;
     }
 
-    if (pipboyWindowInit(forceRest) == -1) {
+    intent = pipboyWindowInit(intent);
+    if (intent == -1) {
         return -1;
     }
 
@@ -414,9 +419,9 @@ int pipboyOpen(bool forceRest)
     while (true) {
         int keyCode = _get_input();
 
-        if (forceRest) {
+        if (intent == PIPBOY_OPEN_INTENT_REST) {
             keyCode = 504;
-            forceRest = false;
+            intent = PIPBOY_OPEN_INTENT_UNSPECIFIED;
         }
 
         mouseGetPositionInWindow(gPipboyWindow, &gPipboyMouseX, &gPipboyMouseY);
@@ -439,13 +444,18 @@ int pipboyOpen(bool forceRest)
             break;
         }
 
-        if (keyCode == 503 || keyCode == KEY_ESCAPE || keyCode == KEY_RETURN || keyCode == KEY_UPPERCASE_P || keyCode == KEY_LOWERCASE_P || _game_user_wants_to_quit != 0) {
+        // SFALL: Close with 'Z'.
+        if (keyCode == 503 || keyCode == KEY_ESCAPE || keyCode == KEY_RETURN || keyCode == KEY_UPPERCASE_P || keyCode == KEY_LOWERCASE_P || keyCode == KEY_UPPERCASE_Z || keyCode == KEY_LOWERCASE_Z || _game_user_wants_to_quit != 0) {
             break;
         }
 
         if (keyCode == KEY_F12) {
             takeScreenshot();
         } else if (keyCode >= 500 && keyCode <= 504) {
+            // CE: Save previous tab selected so that the underlying handlers
+            // (alarm clock in particular) can fallback if something goes wrong.
+            gPipboyPrevTab = gPipboyTab;
+
             gPipboyTab = keyCode - 500;
             _PipFnctn[gPipboyTab](1024);
         } else if (keyCode >= 505 && keyCode <= 527) {
@@ -469,7 +479,7 @@ int pipboyOpen(bool forceRest)
 }
 
 // 0x497228
-static int pipboyWindowInit(bool forceRest)
+static int pipboyWindowInit(int intent)
 {
     gPipboyWindowIsoWasEnabled = isoDisable();
 
@@ -590,7 +600,7 @@ static int pipboyWindowInit(bool forceRest)
         y += 27;
     }
 
-    if (forceRest) {
+    if (intent == PIPBOY_OPEN_INTENT_REST) {
         if (!_critter_can_obj_dude_rest()) {
             blitBufferToBufferTrans(
                 gPipboyFrmData[PIPBOY_FRM_LOGO],
@@ -633,6 +643,8 @@ static int pipboyWindowInit(bool forceRest)
 
             const char* text = getmsg(&gPipboyMessageList, &gPipboyMessageListItem, 215);
             showDialogBox(text, NULL, 0, 192, 135, _colorTable[32328], 0, _colorTable[32328], DIALOG_BOX_LARGE);
+
+            intent = PIPBOY_OPEN_INTENT_UNSPECIFIED;
         }
     } else {
         blitBufferToBufferTrans(
@@ -680,7 +692,7 @@ static int pipboyWindowInit(bool forceRest)
     soundPlayFile("pipon");
     windowRefresh(gPipboyWindow);
 
-    return 0;
+    return intent;
 }
 
 // 0x497828
@@ -922,7 +934,9 @@ static void pipboyWindowHandleStatus(int a1)
                     PIPBOY_WINDOW_WIDTH,
                     gPipboyWindowBuffer + PIPBOY_WINDOW_WIDTH * PIPBOY_WINDOW_CONTENT_VIEW_Y + PIPBOY_WINDOW_CONTENT_VIEW_X,
                     PIPBOY_WINDOW_WIDTH);
-                pipboyWindowRenderHolodiskList(_holodisk);
+                // CE: Fix highlighting holodisk (on par with quest highlighting
+                // approach).
+                pipboyWindowRenderHolodiskList(a1);
                 pipboyWindowRenderQuestLocationList(-1);
                 windowRefreshRect(gPipboyWindow, &gPipboyWindowContentRect);
                 coreDelayProcessingEvents(200);
@@ -1377,7 +1391,9 @@ static int pipboyWindowRenderHolodiskList(int a1)
         HolodiskDescription* holodisk = &(gHolodiskDescriptions[index]);
         if (gGameGlobalVars[holodisk->gvar] != 0) {
             int color;
-            if ((gPipboyCurrentLine - 2) / 2 == a1) {
+            // CE: Fix highlighting holodisk (on par with quest highlighting
+            // approach).
+            if ((gPipboyCurrentLine - 1) / 2 == a1 - 1) {
                 color = _colorTable[32747];
             } else {
                 color = _colorTable[992];
@@ -1746,6 +1762,10 @@ static void pipboyHandleAlarmClock(int a1)
             // You cannot rest at this location!
             const char* text = getmsg(&gPipboyMessageList, &gPipboyMessageListItem, 215);
             showDialogBox(text, NULL, 0, 192, 135, _colorTable[32328], 0, _colorTable[32328], DIALOG_BOX_LARGE);
+
+            // CE: Restore previous tab to make sure clicks are processed by
+            // appropriate handler (not the alarm clock).
+            gPipboyTab = gPipboyPrevTab;
         }
     } else if (a1 >= 4 && a1 <= 17) {
         soundPlayFile("ib1p1xx1");
@@ -2227,10 +2247,10 @@ static int pipboyRenderScreensaver()
             break;
         }
 
-        double random = randomBetween(0, RAND_MAX);
+        double random = randomBetween(0, PIPBOY_RAND_MAX);
 
         // TODO: Figure out what this constant means. Probably somehow related
-        // to RAND_MAX.
+        // to PIPBOY_RAND_MAX.
         if (random < 3047.3311) {
             int index = 0;
             for (; index < PIPBOY_BOMB_COUNT; index += 1) {
@@ -2242,7 +2262,7 @@ static int pipboyRenderScreensaver()
             if (index < PIPBOY_BOMB_COUNT) {
                 PipboyBomb* bomb = &(bombs[index]);
                 int v27 = (350 - gPipboyFrmSizes[PIPBOY_FRM_BOMB].width / 4) + (406 - gPipboyFrmSizes[PIPBOY_FRM_BOMB].height / 4);
-                int v5 = (int)((double)randomBetween(0, RAND_MAX) / (double)RAND_MAX * (double)v27);
+                int v5 = (int)((double)randomBetween(0, PIPBOY_RAND_MAX) / (double)PIPBOY_RAND_MAX * (double)v27);
                 int v6 = gPipboyFrmSizes[PIPBOY_FRM_BOMB].height / 4;
                 if (PIPBOY_WINDOW_CONTENT_VIEW_HEIGHT - v6 >= v5) {
                     bomb->x = 602;
@@ -2253,7 +2273,7 @@ static int pipboyRenderScreensaver()
                 }
 
                 bomb->field_10 = 1;
-                bomb->field_8 = (float)((double)randomBetween(0, RAND_MAX) * (2.75 / RAND_MAX) + 0.15);
+                bomb->field_8 = (float)((double)randomBetween(0, PIPBOY_RAND_MAX) * (2.75 / PIPBOY_RAND_MAX) + 0.15);
                 bomb->field_C = 0;
             }
         }

@@ -121,7 +121,8 @@ int skilldexOpen()
     while (rc == -1) {
         int keyCode = _get_input();
 
-        if (keyCode == KEY_ESCAPE || keyCode == 500 || _game_user_wants_to_quit != 0) {
+        // SFALL: Close with 'S'.
+        if (keyCode == KEY_ESCAPE || keyCode == KEY_UPPERCASE_S || keyCode == KEY_LOWERCASE_S || keyCode == 500 || _game_user_wants_to_quit != 0) {
             rc = 0;
         } else if (keyCode == KEY_RETURN) {
             soundPlayFile("ib1p1xx1");
@@ -264,12 +265,25 @@ static int skilldexWindowInit()
     int valueY = 48;
     for (int index = 0; index < SKILLDEX_SKILL_COUNT; index++) {
         int value = skillGetValue(gDude, gSkilldexSkills[index]);
-        if (value == -1) {
-            value = 0;
+
+        // SFALL: Fix for negative values.
+        //
+        // NOTE: Sfall's fix is different. It simply renders 0 even if
+        // calculated skill level is negative (which can be the case when
+        // playing on Hard difficulty + low Agility). For unknown reason -5 is
+        // the error code from `skillGetValue`, which is not handled here
+        // because -5 is also a legitimate skill value.
+        //
+        // TODO: Provide other error code in `skillGetValue`.
+        unsigned char* numbersFrmData = gSkilldexFrmData[SKILLDEX_FRM_BIG_NUMBERS];
+        if (value < 0) {
+            // First half of the bignum.frm is white, second half is red.
+            numbersFrmData += gSkilldexFrmSizes[SKILLDEX_FRM_BIG_NUMBERS].width / 2;
+            value = -value;
         }
 
         int hundreds = value / 100;
-        blitBufferToBuffer(gSkilldexFrmData[SKILLDEX_FRM_BIG_NUMBERS] + 14 * hundreds,
+        blitBufferToBuffer(numbersFrmData + 14 * hundreds,
             14,
             24,
             336,
@@ -277,7 +291,7 @@ static int skilldexWindowInit()
             gSkilldexFrmSizes[SKILLDEX_FRM_BACKGROUND].width);
 
         int tens = (value % 100) / 10;
-        blitBufferToBuffer(gSkilldexFrmData[SKILLDEX_FRM_BIG_NUMBERS] + 14 * tens,
+        blitBufferToBuffer(numbersFrmData + 14 * tens,
             14,
             24,
             336,
@@ -285,7 +299,7 @@ static int skilldexWindowInit()
             gSkilldexFrmSizes[SKILLDEX_FRM_BACKGROUND].width);
 
         int ones = (value % 100) % 10;
-        blitBufferToBuffer(gSkilldexFrmData[SKILLDEX_FRM_BIG_NUMBERS] + 14 * ones,
+        blitBufferToBuffer(numbersFrmData + 14 * ones,
             14,
             24,
             336,

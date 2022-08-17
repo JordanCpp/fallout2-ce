@@ -30,6 +30,7 @@
 
 #include <string.h>
 
+#include <algorithm>
 #include <vector>
 
 #define ADDICTION_COUNT (9)
@@ -62,6 +63,14 @@ static void booksInitCustom();
 static void booksAdd(int bookPid, int messageId, int skill);
 static void booksExit();
 
+static void explosionsInit();
+static void explosionsReset();
+static void explosionsExit();
+
+static void healingItemsInit();
+static void healingItemsInitVanilla();
+static void healingItemsInitCustom();
+
 typedef struct DrugDescription {
     int drugPid;
     int gvar;
@@ -73,6 +82,13 @@ typedef struct BookDescription {
     int messageId;
     int skill;
 } BookDescription;
+
+typedef struct ExplosiveDescription {
+    int pid;
+    int activePid;
+    int minDamage;
+    int maxDamage;
+} ExplosiveDescription;
 
 // 0x509FFC
 static char _aItem_1[] = "<item>";
@@ -153,6 +169,21 @@ static Object* _wd_obj;
 static int _wd_gvar;
 
 static std::vector<BookDescription> gBooks;
+static bool gExplosionEmitsLight;
+static int gGrenadeExplosionRadius;
+static int gRocketExplosionRadius;
+static int gDynamiteMinDamage;
+static int gDynamiteMaxDamage;
+static int gPlasticExplosiveMinDamage;
+static int gPlasticExplosiveMaxDamage;
+static std::vector<ExplosiveDescription> gExplosives;
+static int gExplosionStartRotation;
+static int gExplosionEndRotation;
+static int gExplosionFrm;
+static int gExplosionRadius;
+static int gExplosionDamageType;
+static int gExplosionMaxTargets;
+static int gHealingItemPids[HEALING_ITEM_COUNT];
 
 // 0x4770E0
 int itemsInit()
@@ -170,6 +201,8 @@ int itemsInit()
 
     // SFALL
     booksInit();
+    explosionsInit();
+    healingItemsInit();
 
     return 0;
 }
@@ -177,7 +210,8 @@ int itemsInit()
 // 0x477144
 void itemsReset()
 {
-    return;
+    // SFALL
+    explosionsReset();
 }
 
 // 0x477148
@@ -187,6 +221,7 @@ void itemsExit()
 
     // SFALL
     booksExit();
+    explosionsExit();
 }
 
 // NOTE: Collapsed.
@@ -1232,55 +1267,44 @@ int weaponGetMeleeDamage(Object* critter, int hitMode)
     int minDamage = 0;
     int maxDamage = 0;
     int meleeDamage = 0;
-    int unarmedDamage = 0;
+    int bonusDamage = 0;
 
     // NOTE: Uninline.
     Object* weapon = critterGetWeaponForHitMode(critter, hitMode);
 
     if (weapon != NULL) {
-        Proto* proto;
-        protoGetProto(weapon->pid, &proto);
-
-        minDamage = proto->item.data.weapon.minDamage;
-        maxDamage = proto->item.data.weapon.maxDamage;
+        // NOTE: Uninline.
+        weaponGetDamageMinMax(weapon, &minDamage, &maxDamage);
 
         int attackType = weaponGetAttackTypeForHitMode(weapon, hitMode);
         if (attackType == ATTACK_TYPE_MELEE || attackType == ATTACK_TYPE_UNARMED) {
             meleeDamage = critterGetStat(critter, STAT_MELEE_DAMAGE);
+
+            // SFALL: Bonus HtH Damage fix.
+            if (damageModGetBonusHthDamageFix()) {
+                if (critter == gDude) {
+                    // See explanation below.
+                    minDamage += 2 * perkGetRank(gDude, PERK_BONUS_HTH_DAMAGE);
+                }
+            }
         }
     } else {
-        minDamage = 1;
-        maxDamage = critterGetStat(critter, STAT_MELEE_DAMAGE) + 2;
+        // SFALL
+        bonusDamage = unarmedGetDamage(hitMode, &minDamage, &maxDamage);
+        meleeDamage = critterGetStat(critter, STAT_MELEE_DAMAGE);
 
-        switch (hitMode) {
-        case HIT_MODE_STRONG_PUNCH:
-        case HIT_MODE_JAB:
-            unarmedDamage = 3;
-            break;
-        case HIT_MODE_HAMMER_PUNCH:
-        case HIT_MODE_STRONG_KICK:
-            unarmedDamage = 4;
-            break;
-        case HIT_MODE_HAYMAKER:
-        case HIT_MODE_PALM_STRIKE:
-        case HIT_MODE_SNAP_KICK:
-        case HIT_MODE_HIP_KICK:
-            unarmedDamage = 7;
-            break;
-        case HIT_MODE_POWER_KICK:
-        case HIT_MODE_HOOK_KICK:
-            unarmedDamage = 9;
-            break;
-        case HIT_MODE_PIERCING_STRIKE:
-            unarmedDamage = 10;
-            break;
-        case HIT_MODE_PIERCING_KICK:
-            unarmedDamage = 12;
-            break;
+        // SFALL: Bonus HtH Damage fix.
+        if (damageModGetBonusHthDamageFix()) {
+            if (critter == gDude) {
+                // Increase only min damage. Max damage should not be changed.
+                // It is calculated later by adding `meleeDamage` which already
+                // includes damage bonus (via `perkAddEffect`).
+                minDamage += 2 * perkGetRank(gDude, PERK_BONUS_HTH_DAMAGE);
+            }
         }
     }
 
-    return randomBetween(unarmedDamage + minDamage, unarmedDamage + meleeDamage + maxDamage);
+    return randomBetween(bonusDamage + minDamage, bonusDamage + meleeDamage + maxDamage);
 }
 
 // 0x478570
@@ -1649,28 +1673,11 @@ int _item_w_mp_cost(Object* critter, int hitMode, bool aiming)
         return 2;
     }
 
-    switch (hitMode) {
-    case HIT_MODE_PALM_STRIKE:
-        actionPoints = 6;
-        break;
-    case HIT_MODE_PIERCING_STRIKE:
-        actionPoints = 8;
-        break;
-    case HIT_MODE_STRONG_KICK:
-    case HIT_MODE_SNAP_KICK:
-    case HIT_MODE_POWER_KICK:
-        actionPoints = 4;
-        break;
-    case HIT_MODE_HIP_KICK:
-    case HIT_MODE_HOOK_KICK:
-        actionPoints = 7;
-        break;
-    case HIT_MODE_PIERCING_KICK:
-        actionPoints = 9;
-        break;
-    default:
-        // TODO: Inverse conditions.
-        if (weapon != NULL && hitMode != HIT_MODE_PUNCH && hitMode != HIT_MODE_KICK && hitMode != HIT_MODE_STRONG_PUNCH && hitMode != HIT_MODE_HAMMER_PUNCH && hitMode != HIT_MODE_HAYMAKER) {
+    // CE: The entire function is different in Sfall.
+    if (isUnarmedHitMode(hitMode)) {
+        actionPoints = unarmedGetActionPointCost(hitMode);
+    } else {
+        if (weapon != NULL) {
             if (hitMode == HIT_MODE_LEFT_WEAPON_PRIMARY || hitMode == HIT_MODE_RIGHT_WEAPON_PRIMARY) {
                 // NOTE: Uninline.
                 actionPoints = weaponGetActionPointCost1(weapon);
@@ -1689,7 +1696,6 @@ int _item_w_mp_cost(Object* critter, int hitMode, bool aiming)
         } else {
             actionPoints = 3;
         }
-        break;
     }
 
     if (critter == gDude) {
@@ -2002,13 +2008,23 @@ int _item_w_area_damage_radius(Object* weapon, int hitMode)
 // 0x479180
 int _item_w_grenade_dmg_radius(Object* weapon)
 {
-    return 2;
+    // SFALL
+    if (gExplosionRadius != -1) {
+        return gExplosionRadius;
+    }
+
+    return gGrenadeExplosionRadius;
 }
 
 // 0x479188
 int _item_w_rocket_dmg_radius(Object* weapon)
 {
-    return 3;
+    // SFALL
+    if (gExplosionRadius != -1) {
+        return gExplosionRadius;
+    }
+
+    return gRocketExplosionRadius;
 }
 
 // 0x479190
@@ -2790,7 +2806,8 @@ int _item_d_take_drug(Object* critter, Object* item)
                 dudeClearAddiction(PROTO_ID_JET);
             }
 
-            return 0;
+            // SFALL: Fix for Jet antidote not being removed.
+            return 1;
         }
     }
 
@@ -3041,7 +3058,10 @@ static void performWithdrawalStart(Object* obj, int perk, int pid)
 
     if (obj == gDude) {
         char* description = perkGetDescription(perk);
-        displayMonitorAddMessage(description);
+        // SFALL: Fix crash when description is missing.
+        if (description != NULL) {
+            displayMonitorAddMessage(description);
+        }
     }
 
     int duration = 10080;
@@ -3351,5 +3371,271 @@ bool booksGetInfo(int bookPid, int* messageIdPtr, int* skillPtr)
             return true;
         }
     }
+    return false;
+}
+
+static void explosionsInit()
+{
+    gExplosionEmitsLight = false;
+    configGetBool(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_EXPLOSION_EMITS_LIGHT_KEY, &gExplosionEmitsLight);
+
+    explosionsReset();
+}
+
+static void explosionsReset()
+{
+    gGrenadeExplosionRadius = 2;
+    gRocketExplosionRadius = 3;
+
+    gDynamiteMinDamage = 30;
+    gDynamiteMaxDamage = 50;
+    gPlasticExplosiveMinDamage = 40;
+    gPlasticExplosiveMaxDamage = 80;
+
+    if (configGetInt(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_DYNAMITE_MAX_DAMAGE_KEY, &gDynamiteMaxDamage)) {
+        gDynamiteMaxDamage = std::clamp(gDynamiteMaxDamage, 0, 9999);
+    }
+
+    if (configGetInt(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_DYNAMITE_MIN_DAMAGE_KEY, &gDynamiteMinDamage)) {
+        gDynamiteMinDamage = std::clamp(gDynamiteMinDamage, 0, gDynamiteMaxDamage);
+    }
+
+    if (configGetInt(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_PLASTIC_EXPLOSIVE_MAX_DAMAGE_KEY, &gPlasticExplosiveMaxDamage)) {
+        gPlasticExplosiveMaxDamage = std::clamp(gPlasticExplosiveMaxDamage, 0, 9999);
+    }
+
+    if (configGetInt(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_PLASTIC_EXPLOSIVE_MIN_DAMAGE_KEY, &gPlasticExplosiveMinDamage)) {
+        gPlasticExplosiveMinDamage = std::clamp(gPlasticExplosiveMinDamage, 0, gPlasticExplosiveMaxDamage);
+    }
+
+    gExplosives.clear();
+
+    explosionSettingsReset();
+}
+
+static void explosionsExit()
+{
+    gExplosives.clear();
+}
+
+bool explosionEmitsLight()
+{
+    return gExplosionEmitsLight;
+}
+
+void weaponSetGrenadeExplosionRadius(int value)
+{
+    gGrenadeExplosionRadius = value;
+}
+
+void weaponSetRocketExplosionRadius(int value)
+{
+    gRocketExplosionRadius = value;
+}
+
+void explosiveAdd(int pid, int activePid, int minDamage, int maxDamage)
+{
+    ExplosiveDescription explosiveDescription;
+    explosiveDescription.pid = pid;
+    explosiveDescription.activePid = activePid;
+    explosiveDescription.minDamage = minDamage;
+    explosiveDescription.maxDamage = maxDamage;
+    gExplosives.push_back(std::move(explosiveDescription));
+}
+
+bool explosiveIsExplosive(int pid)
+{
+    if (pid == PROTO_ID_DYNAMITE_I) return true;
+    if (pid == PROTO_ID_PLASTIC_EXPLOSIVES_I) return true;
+
+    for (const auto& explosive : gExplosives) {
+        if (explosive.pid == pid) return true;
+    }
+
+    return false;
+}
+
+bool explosiveIsActiveExplosive(int pid)
+{
+    if (pid == PROTO_ID_DYNAMITE_II) return true;
+    if (pid == PROTO_ID_PLASTIC_EXPLOSIVES_II) return true;
+
+    for (const auto& explosive : gExplosives) {
+        if (explosive.activePid == pid) return true;
+    }
+
+    return false;
+}
+
+bool explosiveActivate(int* pidPtr)
+{
+    if (*pidPtr == PROTO_ID_DYNAMITE_I) {
+        *pidPtr = PROTO_ID_DYNAMITE_II;
+        return true;
+    }
+
+    if (*pidPtr == PROTO_ID_PLASTIC_EXPLOSIVES_I) {
+        *pidPtr = PROTO_ID_PLASTIC_EXPLOSIVES_II;
+        return true;
+    }
+
+    for (const auto& explosive : gExplosives) {
+        if (explosive.pid == *pidPtr) {
+            *pidPtr = explosive.activePid;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool explosiveSetDamage(int pid, int minDamage, int maxDamage)
+{
+    if (pid == PROTO_ID_DYNAMITE_I) {
+        gDynamiteMinDamage = minDamage;
+        gDynamiteMaxDamage = maxDamage;
+        return true;
+    }
+
+    if (pid == PROTO_ID_PLASTIC_EXPLOSIVES_I) {
+        gPlasticExplosiveMinDamage = minDamage;
+        gPlasticExplosiveMaxDamage = maxDamage;
+        return true;
+    }
+
+    // NOTE: For unknown reason this function do not update custom explosives
+    // damage. Since we're after compatibility (at least at this time), the
+    // only way to follow this behaviour.
+
+    return false;
+}
+
+bool explosiveGetDamage(int pid, int* minDamagePtr, int* maxDamagePtr)
+{
+    if (pid == PROTO_ID_DYNAMITE_I) {
+        *minDamagePtr = gDynamiteMinDamage;
+        *maxDamagePtr = gDynamiteMaxDamage;
+        return true;
+    }
+
+    if (pid == PROTO_ID_PLASTIC_EXPLOSIVES_I) {
+        *minDamagePtr = gPlasticExplosiveMinDamage;
+        *maxDamagePtr = gPlasticExplosiveMaxDamage;
+        return true;
+    }
+
+    for (const auto& explosive : gExplosives) {
+        if (explosive.pid == pid) {
+            *minDamagePtr = explosive.minDamage;
+            *maxDamagePtr = explosive.maxDamage;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void explosionSettingsReset()
+{
+    gExplosionStartRotation = 0;
+    gExplosionEndRotation = ROTATION_COUNT;
+    gExplosionFrm = -1;
+    gExplosionRadius = -1;
+    gExplosionDamageType = DAMAGE_TYPE_EXPLOSION;
+    gExplosionMaxTargets = 6;
+}
+
+void explosionGetPattern(int* startRotationPtr, int* endRotationPtr)
+{
+    *startRotationPtr = gExplosionStartRotation;
+    *endRotationPtr = gExplosionEndRotation;
+}
+
+void explosionSetPattern(int startRotation, int endRotation)
+{
+    gExplosionStartRotation = startRotation;
+    gExplosionEndRotation = endRotation;
+}
+
+int explosionGetFrm()
+{
+    return gExplosionFrm;
+}
+
+void explosionSetFrm(int frm)
+{
+    gExplosionFrm = frm;
+}
+
+void explosionSetRadius(int radius)
+{
+    gExplosionRadius = radius;
+}
+
+int explosionGetDamageType()
+{
+    return gExplosionDamageType;
+}
+
+void explosionSetDamageType(int damageType)
+{
+    gExplosionDamageType = damageType;
+}
+
+int explosionGetMaxTargets()
+{
+    return gExplosionMaxTargets;
+}
+
+void explosionSetMaxTargets(int maxTargets)
+{
+    gExplosionMaxTargets = maxTargets;
+}
+
+static void healingItemsInit()
+{
+    healingItemsInitVanilla();
+    healingItemsInitCustom();
+}
+
+static void healingItemsInitVanilla()
+{
+    gHealingItemPids[HEALING_ITEM_STIMPACK] = PROTO_ID_STIMPACK;
+    gHealingItemPids[HEALING_ITEM_SUPER_STIMPACK] = PROTO_ID_SUPER_STIMPACK;
+    gHealingItemPids[HEALING_ITEM_HEALING_POWDER] = PROTO_ID_HEALING_POWDER;
+}
+
+static void healingItemsInitCustom()
+{
+    char* tweaksFilePath = NULL;
+    configGetString(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_TWEAKS_FILE_KEY, &tweaksFilePath);
+    if (tweaksFilePath != NULL && *tweaksFilePath == '\0') {
+        tweaksFilePath = NULL;
+    }
+
+    if (tweaksFilePath == NULL) {
+        return;
+    }
+
+    Config tweaksConfig;
+    if (configInit(&tweaksConfig)) {
+        if (configRead(&tweaksConfig, tweaksFilePath, false)) {
+            configGetInt(&gSfallConfig, "Items", "STIMPAK", &(gHealingItemPids[HEALING_ITEM_STIMPACK]));
+            configGetInt(&gSfallConfig, "Items", "SUPER_STIMPAK", &(gHealingItemPids[HEALING_ITEM_SUPER_STIMPACK]));
+            configGetInt(&gSfallConfig, "Items", "HEALING_POWDER", &(gHealingItemPids[HEALING_ITEM_HEALING_POWDER]));
+        }
+
+        configFree(&tweaksConfig);
+    }
+}
+
+bool itemIsHealing(int pid)
+{
+    for (int index = 0; index < HEALING_ITEM_COUNT; index++) {
+        if (gHealingItemPids[index] == pid) {
+            return true;
+        }
+    }
+
     return false;
 }

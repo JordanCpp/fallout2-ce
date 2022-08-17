@@ -17,11 +17,13 @@
 #include <limits.h>
 #include <string.h>
 
-// NOT USED.
-void (*_idle_func)() = NULL;
+static void idleImpl();
 
-// NOT USED.
-void (*_focus_func)(int) = NULL;
+// 0x51E234
+IdleFunc* _idle_func = NULL;
+
+// 0x51E238
+FocusFunc* _focus_func = NULL;
 
 // 0x51E23C
 int gKeyboardKeyRepeatRate = 80;
@@ -373,6 +375,9 @@ SDL_Renderer* gSdlRenderer = NULL;
 SDL_Texture* gSdlTexture = NULL;
 SDL_Surface* gSdlTextureSurface = NULL;
 
+static int gMouseWheelX = 0;
+static int gMouseWheelY = 0;
+
 // 0x4C8A70
 int coreInit(int a1)
 {
@@ -407,6 +412,10 @@ int coreInit(int a1)
     gScreenshotHandler = screenshotHandlerDefaultImpl;
     gTickerListHead = NULL;
     gScreenshotKeyCode = KEY_ALT_C;
+
+    // SFALL: Set idle function.
+    // CE: Prevents frying CPU when window is not focused.
+    inputSetIdleFunc(idleImpl);
 
     return 0;
 }
@@ -919,6 +928,70 @@ unsigned int _get_bk_time()
     return gTickerLastTimestamp;
 }
 
+// NOTE: Unused.
+//
+// 0x4C9418
+void inputSetKeyboardKeyRepeatRate(int value)
+{
+    gKeyboardKeyRepeatRate = value;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9420
+int inputGetKeyboardKeyRepeatRate()
+{
+    return gKeyboardKeyRepeatRate;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9428
+void inputSetKeyboardKeyRepeatDelay(int value)
+{
+    gKeyboardKeyRepeatDelay = value;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9430
+int inputGetKeyboardKeyRepeatDelay()
+{
+    return gKeyboardKeyRepeatDelay;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9438
+void inputSetFocusFunc(FocusFunc* func)
+{
+    _focus_func = func;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9440
+FocusFunc* inputGetFocusFunc()
+{
+    return _focus_func;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9448
+void inputSetIdleFunc(IdleFunc* func)
+{
+    _idle_func = func;
+}
+
+// NOTE: Unused.
+//
+// 0x4C9450
+IdleFunc* inputGetIdleFunc()
+{
+    return _idle_func;
+}
+
 // 0x4C9490
 void buildNormalizedQwertyKeys()
 {
@@ -1272,6 +1345,9 @@ void _GNW95_process_message()
             // The data is accumulated in SDL itself and will be processed
             // in `_mouse_info`.
             break;
+        case SDL_MOUSEWHEEL:
+            handleMouseWheelEvent(&(e.wheel));
+            break;
         case SDL_FINGERDOWN:
         case SDL_FINGERMOTION:
         case SDL_FINGERUP:
@@ -1369,7 +1445,7 @@ void _GNW95_process_key(KeyboardData* data)
 void _GNW95_lost_focus()
 {
     if (_focus_func != NULL) {
-        _focus_func(0);
+        _focus_func(false);
     }
 
     while (!gProgramIsActive) {
@@ -1381,7 +1457,7 @@ void _GNW95_lost_focus()
     }
 
     if (_focus_func != NULL) {
-        _focus_func(1);
+        _focus_func(true);
     }
 }
 
@@ -1679,6 +1755,16 @@ void _mouse_info()
     }
 
     _mouse_simulate_input(x, y, buttons);
+
+    // TODO: Move to `_mouse_simulate_input`.
+    // TODO: Record wheel event in VCR.
+    gMouseWheelX = mouseData.wheelX;
+    gMouseWheelY = mouseData.wheelY;
+
+    if (gMouseWheelX != 0 || gMouseWheelY != 0) {
+        gMouseEvent |= MOUSE_EVENT_WHEEL;
+        _raw_buttons |= MOUSE_EVENT_WHEEL;
+    }
 }
 
 // 0x4CA698
@@ -4803,4 +4889,32 @@ bool mouseHitTestInWindow(int win, int left, int top, int right, int bottom)
     }
 
     return _mouse_click_in(left, top, right, bottom);
+}
+
+void mouseGetWheel(int* x, int* y)
+{
+    *x = gMouseWheelX;
+    *y = gMouseWheelY;
+}
+
+void convertMouseWheelToArrowKey(int* keyCodePtr)
+{
+    if (*keyCodePtr == -1) {
+        if ((mouseGetEvent() & MOUSE_EVENT_WHEEL) != 0) {
+            int wheelX;
+            int wheelY;
+            mouseGetWheel(&wheelX, &wheelY);
+
+            if (wheelY > 0) {
+                *keyCodePtr = KEY_ARROW_UP;
+            } else if (wheelY < 0) {
+                *keyCodePtr = KEY_ARROW_DOWN;
+            }
+        }
+    }
+}
+
+static void idleImpl()
+{
+    SDL_Delay(125);
 }

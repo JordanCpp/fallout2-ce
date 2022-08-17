@@ -1339,6 +1339,16 @@ static void opConditionalOperatorGreaterThan(Program* program)
             assert(false && "Should be unreachable");
         }
         break;
+    // Sonora folks tend to use "object > 0" to test objects for nulls.
+    case VALUE_TYPE_PTR:
+        switch (value[0].opcode) {
+        case VALUE_TYPE_INT:
+            result = (intptr_t)value[1].pointerValue > (intptr_t)value[0].integerValue;
+            break;
+        default:
+            assert(false && "Should be unreachable");
+        }
+        break;
     default:
         assert(false && "Should be unreachable");
     }
@@ -1778,8 +1788,18 @@ static void opLogicalOperatorNot(Program* program)
 // 0x46AB2C
 static void opUnaryMinus(Program* program)
 {
-    int value = programStackPopInteger(program);
-    programStackPushInteger(program, -value);
+    // SFALL: Fix vanilla negate operator for float values.
+    ProgramValue programValue = programStackPopValue(program);
+    switch (programValue.opcode) {
+    case VALUE_TYPE_INT:
+        programStackPushInteger(program, -programValue.integerValue);
+        break;
+    case VALUE_TYPE_FLOAT:
+        programStackPushFloat(program, -programValue.floatValue);
+        break;
+    default:
+        programFatalError("Invalid arg given to NEG");
+    }
 }
 
 // 0x46AB84
@@ -3033,6 +3053,14 @@ char* programStackPopString(Program* program)
 void* programStackPopPointer(Program* program)
 {
     ProgramValue programValue = programStackPopValue(program);
+
+    // There are certain places in the scripted code where they refer to
+    // uninitialized exported variables designed to hold objects (pointers).
+    // If this is one theses places simply return NULL.
+    if (programValue.opcode == VALUE_TYPE_INT && programValue.integerValue == 0) {
+        return NULL;
+    }
+
     if (programValue.opcode != VALUE_TYPE_PTR) {
         programFatalError("pointer expected, got %x", programValue.opcode);
     }

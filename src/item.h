@@ -13,6 +13,13 @@ typedef enum _WeaponClass {
     ATTACK_TYPE_COUNT,
 } WeaponClass;
 
+typedef enum HealingItem {
+    HEALING_ITEM_STIMPACK,
+    HEALING_ITEM_SUPER_STIMPACK,
+    HEALING_ITEM_HEALING_POWDER,
+    HEALING_ITEM_COUNT,
+} HealingItem;
+
 int itemsInit();
 void itemsReset();
 void itemsExit();
@@ -124,5 +131,25 @@ int itemGetMoney(Object* obj);
 int itemSetMoney(Object* obj, int a2);
 
 bool booksGetInfo(int bookPid, int* messageIdPtr, int* skillPtr);
+bool explosionEmitsLight();
+void weaponSetGrenadeExplosionRadius(int value);
+void weaponSetRocketExplosionRadius(int value);
+void explosiveAdd(int pid, int activePid, int minDamage, int maxDamage);
+bool explosiveIsExplosive(int pid);
+bool explosiveIsActiveExplosive(int pid);
+bool explosiveActivate(int* pidPtr);
+bool explosiveSetDamage(int pid, int minDamage, int maxDamage);
+bool explosiveGetDamage(int pid, int* minDamagePtr, int* maxDamagePtr);
+void explosionSettingsReset();
+void explosionGetPattern(int* startRotationPtr, int* endRotationPtr);
+void explosionSetPattern(int startRotation, int endRotation);
+int explosionGetFrm();
+void explosionSetFrm(int frm);
+void explosionSetRadius(int radius);
+int explosionGetDamageType();
+void explosionSetDamageType(int damageType);
+int explosionGetMaxTargets();
+void explosionSetMaxTargets(int maxTargets);
+bool itemIsHealing(int pid);
 
 #endif /* ITEM_H */

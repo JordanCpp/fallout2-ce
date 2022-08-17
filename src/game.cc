@@ -343,6 +343,9 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
 
     debugPrint(">endgameDeathEndingInit\n");
 
+    // SFALL
+    premadeCharactersInit();
+
     return 0;
 }
 
@@ -389,6 +392,9 @@ void gameReset()
 void gameExit()
 {
     debugPrint("\nGame Exit\n");
+
+    // SFALL
+    premadeCharactersExit();
 
     tileDisable();
     messageListFree(&gMiscMessageList);
@@ -438,6 +444,27 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     }
 
     if (eventCode == -1) {
+        if ((mouseGetEvent() & MOUSE_EVENT_WHEEL) != 0) {
+            int wheelX;
+            int wheelY;
+            mouseGetWheel(&wheelX, &wheelY);
+
+            int dx = 0;
+            if (wheelX > 0) {
+                dx = 1;
+            } else if (wheelX < 0) {
+                dx = -1;
+            }
+
+            int dy = 0;
+            if (wheelY > 0) {
+                dy = -1;
+            } else if (wheelY < 0) {
+                dy = 1;
+            }
+
+            mapScroll(dx, dy);
+        }
         return 0;
     }
 
@@ -561,7 +588,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 showDialogBox(title, NULL, 0, 192, 116, _colorTable[32328], NULL, _colorTable[32328], 0);
             } else {
                 soundPlayFile("ib1p1xx1");
-                pipboyOpen(false);
+                pipboyOpen(PIPBOY_OPEN_INTENT_UNSPECIFIED);
             }
         }
         break;
@@ -629,7 +656,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 showDialogBox(title, NULL, 0, 192, 116, _colorTable[32328], NULL, _colorTable[32328], 0);
             } else {
                 soundPlayFile("ib1p1xx1");
-                pipboyOpen(true);
+                pipboyOpen(PIPBOY_OPEN_INTENT_REST);
             }
         }
         break;
@@ -1224,6 +1251,7 @@ static int gameDbInit()
 
     _critter_db_handle = dbOpen(main_file_name, 0, patch_file_name, 1);
     if (_critter_db_handle == -1) {
+        _db_select(_master_db_handle);
         showMesageBox("Could not find the critter datafile. Please make sure the FALLOUT CD is in the drive and that you are running FALLOUT from the directory you installed it to.");
         return -1;
     }
@@ -1235,6 +1263,8 @@ static int gameDbInit()
             dbOpen(filename, 0, NULL, 1);
         }
     }
+
+    _db_select(_master_db_handle);
 
     return 0;
 }

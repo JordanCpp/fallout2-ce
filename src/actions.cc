@@ -25,6 +25,7 @@
 #include "proto_types.h"
 #include "random.h"
 #include "scripts.h"
+#include "sfall_config.h"
 #include "skill.h"
 #include "stat.h"
 #include "text_object.h"
@@ -35,6 +36,12 @@
 #include <string.h>
 
 #define MAX_KNOCKDOWN_DISTANCE 20
+
+typedef enum ScienceRepairTargetType {
+    SCIENCE_REPAIR_TARGET_TYPE_DEFAULT,
+    SCIENCE_REPAIR_TARGET_TYPE_DUDE,
+    SCIENCE_REPAIR_TARGET_TYPE_ANYONE,
+} ScienceRepairTargetType;
 
 // 0x5106D0
 static int _action_in_explode = 0;
@@ -316,7 +323,31 @@ void _show_damage_to_object(Object* a1, int damage, int flags, Object* weapon, b
                     sfx_name = sfxBuildCharName(a1, anim, CHARACTER_SOUND_EFFECT_UNUSED);
                     animationRegisterPlaySoundEffect(a1, sfx_name, a10);
 
+                    // SFALL
+                    if (explosionEmitsLight()) {
+                        // 0xFFFF0002:
+                        // - distance: 2
+                        // - intensity: 65535
+                        //
+                        // NOTE: Change intensity to 65536 (which is on par with
+                        // `anim_set_check_light_fix` Sfall's hack).
+                        animationRegisterSetLightIntensity(a1, 2, 65536, 0);
+                    }
+
                     animationRegisterAnimate(a1, anim, 0);
+
+                    // SFALL
+                    if (explosionEmitsLight()) {
+                        // 0x00010000:
+                        // - distance: 0
+                        // - intensity: 1
+                        //
+                        // NOTE: Change intensity to 0. I guess using 1 was a
+                        // workaround for `anim_set_check_light_fix` hack which
+                        // requires two upper bytes to be non-zero to override
+                        // default behaviour.
+                        animationRegisterSetLightIntensity(a1, 0, 0, -1);
+                    }
 
                     int randomDistance = randomBetween(2, 5);
                     int randomRotation = randomBetween(0, 5);
@@ -692,7 +723,8 @@ int _action_ranged(Attack* attack, int anim)
 
     bool isGrenade = false;
     if (anim == ANIM_THROW_ANIM) {
-        if (damageType == DAMAGE_TYPE_EXPLOSION || damageType == DAMAGE_TYPE_PLASMA || damageType == DAMAGE_TYPE_EMP) {
+        // SFALL
+        if (damageType == explosionGetDamageType() || damageType == DAMAGE_TYPE_PLASMA || damageType == DAMAGE_TYPE_EMP) {
             isGrenade = true;
         }
     } else {
@@ -750,7 +782,12 @@ int _action_ranged(Attack* attack, int anim)
 
                 objectHide(projectile, NULL);
 
-                objectSetLight(projectile, 9, projectile->lightIntensity, NULL);
+                // SFALL
+                if (explosionEmitsLight() && projectile->lightIntensity == 0) {
+                    objectSetLight(projectile, projectileProto->item.lightDistance, projectileProto->item.lightIntensity, NULL);
+                } else {
+                    objectSetLight(projectile, 9, projectile->lightIntensity, NULL);
+                }
 
                 int projectileOrigin = _combat_bullet_start(attack->attacker, attack->defender);
                 objectSetLocation(projectile, projectileOrigin, attack->attacker->elevation, NULL);
@@ -774,7 +811,8 @@ int _action_ranged(Attack* attack, int anim)
                     v24 = attack->tile;
                 }
 
-                if (isGrenade || damageType == DAMAGE_TYPE_EXPLOSION) {
+                // SFALL
+                if (isGrenade || damageType == explosionGetDamageType()) {
                     if ((attack->attackerFlags & DAM_DROP) == 0) {
                         int explosionFrmId;
                         if (isGrenade) {
@@ -793,6 +831,12 @@ int _action_ranged(Attack* attack, int anim)
                             explosionFrmId = 10;
                         }
 
+                        // SFALL
+                        int explosionFrmIdOverride = explosionGetFrm();
+                        if (explosionFrmIdOverride != -1) {
+                            explosionFrmId = explosionFrmIdOverride;
+                        }
+
                         if (isGrenade) {
                             animationRegisterSetFid(projectile, weaponFid, -1);
                         }
@@ -803,9 +847,23 @@ int _action_ranged(Attack* attack, int anim)
                         const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_HIT, weapon, attack->hitMode, attack->defender);
                         animationRegisterPlaySoundEffect(projectile, sfx, 0);
 
-                        animationRegisterAnimateAndHide(projectile, ANIM_STAND, 0);
+                        // SFALL
+                        if (explosionEmitsLight()) {
+                            animationRegisterAnimate(projectile, ANIM_STAND, 0);
+                            // 0xFFFF0008
+                            // - distance: 8
+                            // - intensity: 65535
+                            animationRegisterSetLightIntensity(projectile, 8, 65536, 0);
+                        } else {
+                            animationRegisterAnimateAndHide(projectile, ANIM_STAND, 0);
+                        }
 
-                        for (int rotation = 0; rotation < ROTATION_COUNT; rotation++) {
+                        // SFALL
+                        int startRotation;
+                        int endRotation;
+                        explosionGetPattern(&startRotation, &endRotation);
+
+                        for (int rotation = startRotation; rotation < endRotation; rotation++) {
                             if (objectCreateWithFidPid(&(neighboors[rotation]), explosionFid, -1) != -1) {
                                 objectHide(neighboors[rotation], NULL);
 
@@ -864,7 +922,8 @@ int _action_ranged(Attack* attack, int anim)
         }
     }
 
-    if (projectile != NULL && (isGrenade || damageType == DAMAGE_TYPE_EXPLOSION)) {
+    // SFALL
+    if (projectile != NULL && (isGrenade || damageType == explosionGetDamageType())) {
         animationRegisterHideObjectForced(projectile);
     } else if (anim == ANIM_THROW_ANIM && projectile != NULL) {
         animationRegisterSetFid(projectile, weaponFid, -1);
@@ -1328,6 +1387,19 @@ int actionUseSkill(Object* a1, Object* a2, int skill)
         if (critterGetKillType(a2) == KILL_TYPE_BRAHMIN
             && skill == SKILL_SCIENCE) {
             break;
+        }
+
+        // SFALL: Science on critters patch.
+        if (1) {
+            int targetType = SCIENCE_REPAIR_TARGET_TYPE_DEFAULT;
+            configGetInt(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_SCIENCE_REPAIR_TARGET_TYPE_KEY, &targetType);
+            if (targetType == SCIENCE_REPAIR_TARGET_TYPE_DUDE) {
+                if (a2 == gDude) {
+                    break;
+                }
+            } else if (targetType == SCIENCE_REPAIR_TARGET_TYPE_ANYONE) {
+                break;
+            }
         }
 
         return -1;

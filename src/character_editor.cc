@@ -2,6 +2,7 @@
 
 #include "art.h"
 #include "color.h"
+#include "combat.h"
 #include "core.h"
 #include "critter.h"
 #include "cycle.h"
@@ -291,6 +292,9 @@ static int genericReputationCompare(const void* a1, const void* a2);
 static void customKarmaFolderInit();
 static void customKarmaFolderFree();
 static int customKarmaFolderGetFrmId();
+
+static void customTownReputationInit();
+static void customTownReputationFree();
 
 // 0x431C40
 static int gCharacterEditorFrmIds[EDITOR_GRAPHIC_COUNT] = {
@@ -792,6 +796,7 @@ struct CustomKarmaFolderDescription {
 };
 
 static std::vector<CustomKarmaFolderDescription> gCustomKarmaFolderDescriptions;
+static std::vector<TownReputationEntry> gCustomTownReputationEntries;
 
 // 0x431DF8
 int characterEditorShow(bool isCreationMode)
@@ -825,6 +830,8 @@ int characterEditorShow(bool isCreationMode)
     while (rc == -1) {
         _frame_time = _get_time();
         int keyCode = _get_input();
+
+        convertMouseWheelToArrowKey(&keyCode);
 
         bool done = false;
         if (keyCode == 500) {
@@ -1292,6 +1299,9 @@ static int characterEditorWindowInit()
 
     // SFALL: Custom karma folder.
     customKarmaFolderInit();
+
+    // SFALL: Custom town reputation.
+    customTownReputationInit();
 
     soundContinueAll();
 
@@ -1854,6 +1864,9 @@ static void characterEditorWindowFree()
 
     // SFALL: Custom karma folder.
     customKarmaFolderFree();
+
+    // SFALL: Custom town reputation.
+    customTownReputationFree();
 
     messageListFree(&gCharacterEditorMessageList);
 
@@ -2789,7 +2802,13 @@ static void characterEditorDrawDerivedStats()
     sprintf(t, "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    compat_itoa(critterGetStat(gDude, STAT_MELEE_DAMAGE), t, 10);
+    // SFALL: Display melee damage without "Bonus HtH Damage" bonus.
+    int meleeDamage = critterGetStat(gDude, STAT_MELEE_DAMAGE);
+    if (!damageModGetDisplayBonusDamage()) {
+        meleeDamage -= 2 * perkGetRank(gDude, PERK_BONUS_HTH_DAMAGE);
+    }
+
+    compat_itoa(meleeDamage, t, 10);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 288, t, 640, 640, color);
 
     // Damage Resistance
@@ -4392,13 +4411,19 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString(title1, stream);
     fileWriteString("\n", stream);
 
+    // SFALL: Display melee damage without "Bonus HtH Damage" bonus.
+    int meleeDamage = critterGetStat(gDude, STAT_MELEE_DAMAGE);
+    if (!damageModGetDisplayBonusDamage()) {
+        meleeDamage -= 2 * perkGetRank(gDude, PERK_BONUS_HTH_DAMAGE);
+    }
+
     // Charisma / Melee Damage / Carry Weight
     sprintf(title1,
         "%s %.2d %s %.2d %s %.3d lbs.",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 633),
         critterGetStat(gDude, STAT_CHARISMA),
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 634),
-        critterGetStat(gDude, STAT_MELEE_DAMAGE),
+        meleeDamage,
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 635),
         critterGetStat(gDude, STAT_CARRY_WEIGHT));
     fileWriteString(title1, stream);
@@ -4516,8 +4541,9 @@ static int characterPrintToFile(const char* fileName)
     }
 
     bool hasTownReputationHeading = false;
-    for (int index = 0; index < TOWN_REPUTATION_COUNT; index++) {
-        const TownReputationEntry* pair = &(gTownReputationEntries[index]);
+    // SFALL
+    for (int index = 0; index < gCustomTownReputationEntries.size(); index++) {
+        const TownReputationEntry* pair = &(gCustomTownReputationEntries[index]);
         if (_wmAreaIsKnown(pair->city)) {
             if (!hasTownReputationHeading) {
                 fileWriteString("\n", stream);
@@ -5504,8 +5530,9 @@ static void characterEditorDrawKarmaFolder()
     }
 
     bool hasTownReputationHeading = false;
-    for (int index = 0; index < TOWN_REPUTATION_COUNT; index++) {
-        const TownReputationEntry* pair = &(gTownReputationEntries[index]);
+    // SFALL
+    for (int index = 0; index < gCustomTownReputationEntries.size(); index++) {
+        const TownReputationEntry* pair = &(gCustomTownReputationEntries[index]);
         if (_wmAreaIsKnown(pair->city)) {
             if (!hasTownReputationHeading) {
                 msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 4000);
@@ -5949,6 +5976,8 @@ static int perkDialogHandleInput(int count, void (*refreshProc)())
     while (rc == 0) {
         int keyCode = _get_input();
         int v19 = 0;
+
+        convertMouseWheelToArrowKey(&keyCode);
 
         if (keyCode == 500) {
             rc = 1;
@@ -7161,4 +7190,54 @@ static int customKarmaFolderGetFrmId()
         }
     }
     return gCustomKarmaFolderDescriptions.end()->frmId;
+}
+
+static void customTownReputationInit()
+{
+    char* reputationList = NULL;
+    configGetString(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_CITY_REPUTATION_LIST_KEY, &reputationList);
+    if (reputationList != NULL && *reputationList == '\0') {
+        reputationList = NULL;
+    }
+
+    char* curr = reputationList;
+    while (curr != NULL) {
+        char* next = strchr(curr, ',');
+        if (next != NULL) {
+            *next = '\0';
+        }
+
+        char* sep = strchr(curr, ':');
+        if (sep != NULL) {
+            *sep = '\0';
+
+            TownReputationEntry entry;
+            entry.city = atoi(curr);
+            entry.gvar = atoi(sep + 1);
+            gCustomTownReputationEntries.push_back(std::move(entry));
+
+            *sep = ':';
+        }
+
+        if (next != NULL) {
+            *next = ',';
+            curr = next + 1;
+        } else {
+            curr = NULL;
+        }
+    }
+
+    if (gCustomTownReputationEntries.empty()) {
+        gCustomTownReputationEntries.resize(TOWN_REPUTATION_COUNT);
+
+        for (int index = 0; index < TOWN_REPUTATION_COUNT; index++) {
+            gCustomTownReputationEntries[index].gvar = gTownReputationEntries[index].gvar;
+            gCustomTownReputationEntries[index].city = gTownReputationEntries[index].city;
+        }
+    }
+}
+
+static void customTownReputationFree()
+{
+    gCustomTownReputationEntries.clear();
 }
