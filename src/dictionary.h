@@ -1,9 +1,11 @@
 #ifndef DICTIONARY_H
 #define DICTIONARY_H
 
+#include <stdio.h>
+
 #include "memory_defs.h"
 
-#include <stdio.h>
+namespace fallout {
 
 typedef int(DictionaryReadProc)(FILE* stream, void* buffer, unsigned int size, int a4);
 typedef int(DictionaryWriteProc)(FILE* stream, void* buffer, unsigned int size, int a4);
@@ -62,5 +64,7 @@ int dictionaryWriteInt(FILE* stream, int value);
 int dictionaryWriteHeader(FILE* stream, Dictionary* dictionary);
 int dictionaryWrite(FILE* stream, Dictionary* dictionary, int a3);
 void dictionarySetMemoryProcs(MallocProc* mallocProc, ReallocProc* reallocProc, FreeProc* freeProc);
+
+} // namespace fallout
 
 #endif /* DICTIONARY_H */

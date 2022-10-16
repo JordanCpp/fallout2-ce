@@ -10,6 +10,8 @@
 #define WEAPON_CRITICAL_FAILURE_TYPE_COUNT (7)
 #define WEAPON_CRITICAL_FAILURE_EFFECT_COUNT (5)
 
+namespace fallout {
+
 typedef enum CombatState {
     COMBAT_STATE_0x01 = 0x01,
     COMBAT_STATE_0x02 = 0x02,
@@ -157,5 +159,18 @@ typedef union CriticalHitDescription {
     // SFALL: Allow indexed access to the data above.
     int values[CRIT_DATA_MEMBER_COUNT];
 } CriticalHitDescription;
+
+typedef enum CombatBadShot {
+    COMBAT_BAD_SHOT_OK = 0,
+    COMBAT_BAD_SHOT_NO_AMMO = 1,
+    COMBAT_BAD_SHOT_OUT_OF_RANGE = 2,
+    COMBAT_BAD_SHOT_NOT_ENOUGH_AP = 3,
+    COMBAT_BAD_SHOT_ALREADY_DEAD = 4,
+    COMBAT_BAD_SHOT_AIM_BLOCKED = 5,
+    COMBAT_BAD_SHOT_ARM_CRIPPLED = 6,
+    COMBAT_BAD_SHOT_BOTH_ARMS_CRIPPLED = 7,
+} CombatBadShot;
+
+} // namespace fallout
 
 #endif /* COMBAT_DEFS_H */

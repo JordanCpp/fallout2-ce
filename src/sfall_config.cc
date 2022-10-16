@@ -1,9 +1,11 @@
 #include "sfall_config.h"
 
-#include "platform_compat.h"
-
 #include <stdio.h>
 #include <string.h>
+
+#include "platform_compat.h"
+
+namespace fallout {
 
 #define SFALL_CONFIG_FILE_NAME "ddraw.ini"
 
@@ -75,3 +77,5 @@ void sfallConfigExit()
         gSfallConfigInitialized = false;
     }
 }
+
+} // namespace fallout

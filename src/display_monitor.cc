@@ -1,22 +1,25 @@
 #include "display_monitor.h"
 
+#include <string.h>
+
+#include <fstream>
+
 #include "art.h"
 #include "color.h"
 #include "combat.h"
-#include "core.h"
 #include "draw.h"
 #include "game_mouse.h"
 #include "game_sound.h"
 #include "geometry.h"
+#include "input.h"
 #include "interface.h"
 #include "memory.h"
 #include "sfall_config.h"
+#include "svga.h"
 #include "text_font.h"
 #include "window_manager.h"
 
-#include <string.h>
-
-#include <fstream>
+namespace fallout {
 
 // The maximum number of lines display monitor can hold. Once this value
 // is reached earlier messages are thrown away.
@@ -36,6 +39,7 @@
 
 #define DISPLAY_MONITOR_BEEP_DELAY (500U)
 
+static void display_clear();
 static void displayMonitorRefresh();
 static void displayMonitorScrollUpOnMouseDown(int btn, int keyCode);
 static void displayMonitorScrollDownOnMouseDown(int btn, int keyCode);
@@ -180,14 +184,8 @@ int displayMonitorInit()
         gDisplayMonitorEnabled = true;
         gDisplayMonitorInitialized = true;
 
-        for (int index = 0; index < gDisplayMonitorLinesCapacity; index++) {
-            gDisplayMonitorLines[index][0] = '\0';
-        }
-
-        _disp_start = 0;
-        _disp_curr = 0;
-
-        displayMonitorRefresh();
+        // NOTE: Uninline.
+        display_clear();
 
         // SFALL
         consoleFileInit();
@@ -199,18 +197,12 @@ int displayMonitorInit()
 // 0x431800
 int displayMonitorReset()
 {
-    if (gDisplayMonitorInitialized) {
-        for (int index = 0; index < gDisplayMonitorLinesCapacity; index++) {
-            gDisplayMonitorLines[index][0] = '\0';
-        }
+    // NOTE: Uninline.
+    display_clear();
 
-        _disp_start = 0;
-        _disp_curr = 0;
-        displayMonitorRefresh();
+    // SFALL
+    consoleFileReset();
 
-        // SFALL
-        consoleFileReset();
-    }
     return 0;
 }
 
@@ -317,6 +309,24 @@ void displayMonitorAddMessage(char* str)
     fontSetCurrent(oldFont);
     _disp_curr = _disp_start;
     displayMonitorRefresh();
+}
+
+// NOTE: Inlined.
+//
+// 0x431A2C
+static void display_clear()
+{
+    int index;
+
+    if (gDisplayMonitorInitialized) {
+        for (index = 0; index < gDisplayMonitorLinesCapacity; index++) {
+            gDisplayMonitorLines[index][0] = '\0';
+        }
+
+        _disp_start = 0;
+        _disp_curr = 0;
+        displayMonitorRefresh();
+    }
 }
 
 // 0x431A78
@@ -461,3 +471,5 @@ static void consoleFileFlush()
         gConsoleFileStream.flush();
     }
 }
+
+} // namespace fallout

@@ -1,11 +1,15 @@
 #include "scripts.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
 #include "automap.h"
 #include "combat.h"
-#include "core.h"
 #include "critter.h"
 #include "debug.h"
 #include "dialog.h"
@@ -16,6 +20,7 @@
 #include "game_dialog.h"
 #include "game_mouse.h"
 #include "game_movie.h"
+#include "input.h"
 #include "memory.h"
 #include "message.h"
 #include "object.h"
@@ -25,15 +30,13 @@
 #include "proto_instance.h"
 #include "queue.h"
 #include "stat.h"
+#include "svga.h"
 #include "tile.h"
 #include "window_manager.h"
 #include "window_manager_private.h"
-#include "world_map.h"
+#include "worldmap.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+namespace fallout {
 
 #define SCRIPT_LIST_EXTENT_SIZE 16
 
@@ -443,9 +446,9 @@ int _scriptsCheckGameEvents(int* moviePtr, int window)
             movie = MOVIE_ARTIMER4;
             if (!gameMovieIsSeen(MOVIE_ARTIMER4)) {
                 adjustRep = true;
-                _wmAreaSetVisibleState(CITY_ARROYO, 0, 1);
-                _wmAreaSetVisibleState(CITY_DESTROYED_ARROYO, 1, 1);
-                _wmAreaMarkVisitedState(CITY_DESTROYED_ARROYO, 2);
+                wmAreaSetVisibleState(CITY_ARROYO, 0, 1);
+                wmAreaSetVisibleState(CITY_DESTROYED_ARROYO, 1, 1);
+                wmAreaMarkVisitedState(CITY_DESTROYED_ARROYO, 2);
             }
         } else if (day >= 270 && gameGetGlobalVar(GVAR_FALLOUT_2) != 3) {
             adjustRep = true;
@@ -744,7 +747,7 @@ static void _script_chk_timed_events()
         v1 = true;
     }
 
-    if (_game_state() != 4) {
+    if (gameGetState() != GAME_STATE_4) {
         if (getTicksBetween(v0, _last_light_time) >= 30000) {
             _last_light_time = v0;
             scriptsExecMapUpdateScripts(SCRIPT_PROC_MAP_UPDATE);
@@ -907,12 +910,12 @@ int scriptsHandleRequests()
 
     if ((gScriptsRequests & SCRIPT_REQUEST_0x02) != 0) {
         gScriptsRequests &= ~SCRIPT_REQUEST_0x02;
-        _wmTownMap();
+        wmTownMap();
     }
 
     if ((gScriptsRequests & SCRIPT_REQUEST_WORLD_MAP) != 0) {
         gScriptsRequests &= ~SCRIPT_REQUEST_WORLD_MAP;
-        _wmWorldMap();
+        wmWorldMap();
     }
 
     if ((gScriptsRequests & SCRIPT_REQUEST_ELEVATOR) != 0) {
@@ -1308,7 +1311,8 @@ int scriptExecProc(int sid, int proc)
         }
 
         script->action = 0;
-        programListNodeCreate(program);
+        // NOTE: Uninline.
+        runProgram(program);
         _interpret(program, -1);
     }
 
@@ -2731,7 +2735,7 @@ char* _scr_get_msg_str_speech(int messageListId, int messageId, int a3)
 }
 
 // 0x4A6D64
-int scriptGetLocalVar(int sid, int variable, int* value)
+int scriptGetLocalVar(int sid, int variable, ProgramValue& value)
 {
     if (SID_TYPE(sid) == SCRIPT_TYPE_SYSTEM) {
         debugPrint("\nError! System scripts/Map scripts not allowed local_vars! ");
@@ -2741,13 +2745,15 @@ int scriptGetLocalVar(int sid, int variable, int* value)
 
         debugPrint(":%s\n", _tempStr1);
 
-        *value = -1;
+        value.opcode = VALUE_TYPE_INT;
+        value.integerValue = -1;
         return -1;
     }
 
     Script* script;
     if (scriptGetScript(sid, &script) == -1) {
-        *value = -1;
+        value.opcode = VALUE_TYPE_INT;
+        value.integerValue = -1;
         return -1;
     }
 
@@ -2761,14 +2767,18 @@ int scriptGetLocalVar(int sid, int variable, int* value)
             script->localVarsOffset = _map_malloc_local_var(script->localVarsCount);
         }
 
-        *value = mapGetLocalVar(script->localVarsOffset + variable);
+        if (mapGetLocalVar(script->localVarsOffset + variable, value) == -1) {
+            value.opcode = VALUE_TYPE_INT;
+            value.integerValue = -1;
+            return -1;
+        }
     }
 
     return 0;
 }
 
 // 0x4A6E58
-int scriptSetLocalVar(int sid, int variable, int value)
+int scriptSetLocalVar(int sid, int variable, ProgramValue& value)
 {
     Script* script;
     if (scriptGetScript(sid, &script) == -1) {
@@ -2910,3 +2920,5 @@ int _scr_explode_scenery(Object* a1, int tile, int radius, int elevation)
 
     return 0;
 }
+
+} // namespace fallout

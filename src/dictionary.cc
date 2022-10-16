@@ -1,10 +1,12 @@
 #include "dictionary.h"
 
-#include "platform_compat.h"
-
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "platform_compat.h"
+
+namespace fallout {
 
 // NOTE: I guess this marker is used as a type discriminator for implementing
 // nested dictionaries. That's why every dictionary-related function starts
@@ -552,3 +554,5 @@ void dictionarySetMemoryProcs(MallocProc* mallocProc, ReallocProc* reallocProc, 
         gDictionaryFreeProc = dictionaryFreeDefaultImpl;
     }
 }
+
+} // namespace fallout

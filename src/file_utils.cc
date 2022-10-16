@@ -2,13 +2,16 @@
 // of regular __usercall.
 
 #include "file_utils.h"
-#include "platform_compat.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <zlib.h>
 
 #include <vector>
+
+#include "platform_compat.h"
+
+namespace fallout {
 
 static void fileCopy(const char* existingFilePath, const char* newFilePath);
 
@@ -184,3 +187,5 @@ static void fileCopy(const char* existingFilePath, const char* newFilePath)
         fclose(out);
     }
 }
+
+} // namespace fallout

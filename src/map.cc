@@ -1,22 +1,26 @@
 #include "map.h"
 
+#include <stdio.h>
+#include <string.h>
+
+#include <vector>
+
 #include "animation.h"
 #include "art.h"
 #include "automap.h"
 #include "character_editor.h"
 #include "color.h"
 #include "combat.h"
-#include "core.h"
 #include "critter.h"
 #include "cycle.h"
 #include "debug.h"
 #include "draw.h"
 #include "elevator.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_mouse.h"
 #include "game_movie.h"
 #include "game_sound.h"
+#include "input.h"
 #include "interface.h"
 #include "item.h"
 #include "light.h"
@@ -31,14 +35,15 @@
 #include "queue.h"
 #include "random.h"
 #include "scripts.h"
+#include "settings.h"
+#include "svga.h"
 #include "text_object.h"
 #include "tile.h"
 #include "window_manager.h"
 #include "window_manager_private.h"
-#include "world_map.h"
+#include "worldmap.h"
 
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 static char* mapBuildPath(char* name);
 static int mapLoad(File* stream);
@@ -50,9 +55,14 @@ static void mapMakeMapsDirectory();
 static void isoWindowRefreshRect(Rect* rect);
 static void isoWindowRefreshRectGame(Rect* rect);
 static void isoWindowRefreshRectMapper(Rect* rect);
+static int mapGlobalVariablesInit(int count);
 static void mapGlobalVariablesFree();
+static int mapGlobalVariablesLoad(File* stream);
+static int mapLocalVariablesInit(int count);
 static void mapLocalVariablesFree();
+static int mapLocalVariablesLoad(File* stream);
 static void _map_place_dude_and_mouse();
+static void square_init();
 static void _square_reset();
 static int _square_load(File* stream, int a2);
 static int mapHeaderWrite(MapHeader* ptr, File* stream);
@@ -154,6 +164,12 @@ static char _scratchStr[40];
 // 0x631E78
 static char _map_path[COMPAT_MAX_PATH];
 
+// CE: There is a bug in the user-space scripting where they want to store
+// pointers to |Object| instances in local vars. This is obviously wrong as it's
+// meaningless to save these pointers in file. As a workaround use second array
+// to store these pointers.
+static std::vector<void*> gMapLocalPointers;
+
 // iso_init
 // 0x481CA0
 int isoInit()
@@ -161,9 +177,8 @@ int isoInit()
     tileScrollLimitingDisable();
     tileScrollBlockingDisable();
 
-    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
-        _square[elevation] = &(_square_data[elevation]);
-    }
+    // NOTE: Uninline.
+    square_init();
 
     gIsoWindow = windowCreate(0, 0, screenGetWidth(), screenGetVisibleHeight(), 256, 10);
     if (gIsoWindow == -1) {
@@ -221,9 +236,8 @@ int isoInit()
 
     mapMakeMapsDirectory();
 
-    gEnteringElevation = -1;
-    gEnteringTile = -1;
-    gEnteringRotation = -1;
+    // NOTE: Uninline.
+    mapSetEnteringLocation(-1, -1, -1);
 
     return 0;
 }
@@ -231,26 +245,20 @@ int isoInit()
 // 0x481ED4
 void isoReset()
 {
-    if (gMapGlobalVars != NULL) {
-        internal_free(gMapGlobalVars);
-        gMapGlobalVars = NULL;
-        gMapGlobalVarsLength = 0;
-    }
+    // NOTE: Uninline.
+    mapGlobalVariablesFree();
 
-    if (gMapLocalVars != NULL) {
-        internal_free(gMapLocalVars);
-        gMapLocalVars = NULL;
-        gMapLocalVarsLength = 0;
-    }
+    // NOTE: Uninline.
+    mapLocalVariablesFree();
 
     artReset();
     tileReset();
     objectsReset();
     colorCycleReset();
     interfaceReset();
-    gEnteringElevation = -1;
-    gEnteringTile = -1;
-    gEnteringRotation = -1;
+
+    // NOTE: Uninline.
+    mapSetEnteringLocation(-1, -1, -1);
 }
 
 // 0x481F48
@@ -262,25 +270,19 @@ void isoExit()
     tileExit();
     artExit();
 
-    if (gMapGlobalVars != NULL) {
-        internal_free(gMapGlobalVars);
-        gMapGlobalVars = NULL;
-        gMapGlobalVarsLength = 0;
-    }
+    windowDestroy(gIsoWindow);
 
-    if (gMapLocalVars != NULL) {
-        internal_free(gMapLocalVars);
-        gMapLocalVars = NULL;
-        gMapLocalVarsLength = 0;
-    }
+    // NOTE: Uninline.
+    mapGlobalVariablesFree();
+
+    // NOTE: Uninline.
+    mapLocalVariablesFree();
 }
 
 // 0x481FB4
 void _map_init()
 {
-    char* executable;
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, "executable", &executable);
-    if (compat_stricmp(executable, "mapper") == 0) {
+    if (compat_stricmp(settings.system.executable.c_str(), "mapper") == 0) {
         _map_scroll_refresh = isoWindowRefreshRectMapper;
     }
 
@@ -295,7 +297,7 @@ void _map_init()
         debugPrint("\nError initing map_msg_file!");
     }
 
-    _map_new_map();
+    mapNewMap();
     tickersAdd(gameMouseRefresh);
     _gmouse_disable(0);
     windowUnhide(gIsoWindow);
@@ -367,7 +369,7 @@ int mapSetElevation(int elevation)
     }
 
     if (elevation != gElevation) {
-        _wmMapMarkMapEntranceState(gMapHeader.field_34, elevation, 1);
+        wmMapMarkMapEntranceState(gMapHeader.field_34, elevation, 1);
     }
 
     gElevation = elevation;
@@ -412,27 +414,41 @@ int mapGetGlobalVar(int var)
 }
 
 // 0x482280
-int mapSetLocalVar(int var, int value)
+int mapSetLocalVar(int var, ProgramValue& value)
 {
     if (var < 0 || var >= gMapLocalVarsLength) {
         debugPrint("ERROR: attempt to reference local var out of range: %d", var);
         return -1;
     }
 
-    gMapLocalVars[var] = value;
+    if (value.opcode == VALUE_TYPE_PTR) {
+        gMapLocalVars[var] = 0;
+        gMapLocalPointers[var] = value.pointerValue;
+    } else {
+        gMapLocalVars[var] = value.integerValue;
+        gMapLocalPointers[var] = nullptr;
+    }
 
     return 0;
 }
 
 // 0x4822B0
-int mapGetLocalVar(int var)
+int mapGetLocalVar(int var, ProgramValue& value)
 {
     if (var < 0 || var >= gMapLocalVarsLength) {
         debugPrint("ERROR: attempt to reference local var out of range: %d", var);
-        return 0;
+        return -1;
     }
 
-    return gMapLocalVars[var];
+    if (gMapLocalPointers[var] != nullptr) {
+        value.opcode = VALUE_TYPE_PTR;
+        value.pointerValue = gMapLocalPointers[var];
+    } else {
+        value.opcode = VALUE_TYPE_INT;
+        value.integerValue = gMapLocalVars[var];
+    }
+
+    return 0;
 }
 
 // Make a room to store more local variables.
@@ -451,6 +467,8 @@ int _map_malloc_local_var(int a1)
     gMapLocalVars = vars;
     memset((unsigned char*)vars + sizeof(*vars) * oldMapLocalVarsLength, 0, sizeof(*vars) * a1);
 
+    gMapLocalPointers.resize(gMapLocalVarsLength);
+
     return oldMapLocalVarsLength;
 }
 
@@ -465,7 +483,7 @@ void mapSetStart(int tile, int elevation, int rotation)
 // 0x4824CC
 char* mapGetName(int map, int elevation)
 {
-    if (map < 0 || map >= mapGetCount()) {
+    if (map < 0 || map >= wmMapMaxCount()) {
         return NULL;
     }
 
@@ -482,29 +500,29 @@ char* mapGetName(int map, int elevation)
 // 0x482528
 bool _is_map_idx_same(int map1, int map2)
 {
-    if (map1 < 0 || map1 >= mapGetCount()) {
+    if (map1 < 0 || map1 >= wmMapMaxCount()) {
         return 0;
     }
 
-    if (map2 < 0 || map2 >= mapGetCount()) {
+    if (map2 < 0 || map2 >= wmMapMaxCount()) {
         return 0;
     }
 
-    if (!_wmMapIdxIsSaveable(map1)) {
+    if (!wmMapIdxIsSaveable(map1)) {
         return 0;
     }
 
-    if (!_wmMapIdxIsSaveable(map2)) {
+    if (!wmMapIdxIsSaveable(map2)) {
         return 0;
     }
 
     int city1;
-    if (_wmMatchAreaContainingMapIdx(map1, &city1) == -1) {
+    if (wmMatchAreaContainingMapIdx(map1, &city1) == -1) {
         return 0;
     }
 
     int city2;
-    if (_wmMatchAreaContainingMapIdx(map2, &city2) == -1) {
+    if (wmMatchAreaContainingMapIdx(map2, &city2) == -1) {
         return 0;
     }
 
@@ -515,12 +533,12 @@ bool _is_map_idx_same(int map1, int map2)
 int _get_map_idx_same(int map1, int map2)
 {
     int city1 = -1;
-    if (_wmMatchAreaContainingMapIdx(map1, &city1) == -1) {
+    if (wmMatchAreaContainingMapIdx(map1, &city1) == -1) {
         return -1;
     }
 
     int city2 = -2;
-    if (_wmMatchAreaContainingMapIdx(map2, &city2) == -1) {
+    if (wmMatchAreaContainingMapIdx(map2, &city2) == -1) {
         return -1;
     }
 
@@ -535,7 +553,7 @@ int _get_map_idx_same(int map1, int map2)
 char* mapGetCityName(int map)
 {
     int city;
-    if (_wmMatchAreaContainingMapIdx(map, &city) == -1) {
+    if (wmMatchAreaContainingMapIdx(map, &city) == -1) {
         return _aErrorF2;
     }
 
@@ -548,8 +566,8 @@ char* mapGetCityName(int map)
 char* _map_get_description_idx_(int map)
 {
     int city;
-    if (_wmMatchAreaContainingMapIdx(map, &city) == 0) {
-        _wmGetAreaIdxName(city, _scratchStr);
+    if (wmMatchAreaContainingMapIdx(map, &city) == 0) {
+        wmGetAreaIdxName(city, _scratchStr);
     } else {
         strcpy(_scratchStr, _errMapName);
     }
@@ -570,7 +588,7 @@ int mapScroll(int dx, int dy)
         return -2;
     }
 
-    gIsoWindowScrollTimestamp = _get_time();
+    gIsoWindowScrollTimestamp = getTicks();
 
     int screenDx = dx * 32;
     int screenDy = dy * 24;
@@ -686,7 +704,7 @@ int mapSetEnteringLocation(int elevation, int tile_num, int orientation)
 }
 
 // 0x482938
-void _map_new_map()
+void mapNewMap()
 {
     mapSetElevation(0);
     tileSetCenter(20100, TILE_SET_CENTER_FLAG_0x02);
@@ -700,17 +718,11 @@ void _map_new_map()
     _obj_remove_all();
     animationStop();
 
-    if (gMapGlobalVars != NULL) {
-        internal_free(gMapGlobalVars);
-        gMapGlobalVars = NULL;
-        gMapGlobalVarsLength = 0;
-    }
+    // NOTE: Uninline.
+    mapGlobalVariablesFree();
 
-    if (gMapLocalVars != NULL) {
-        internal_free(gMapLocalVars);
-        gMapLocalVars = NULL;
-        gMapLocalVarsLength = 0;
-    }
+    // NOTE: Uninline.
+    mapLocalVariablesFree();
 
     _square_reset();
     _map_place_dude_and_mouse();
@@ -739,7 +751,7 @@ int mapLoadByName(char* fileName)
         if (stream != NULL) {
             fileClose(stream);
             rc = mapLoadSaved(fileName);
-            worldmapStartMapMusic();
+            wmMapMusicStart();
         }
     }
 
@@ -766,7 +778,7 @@ int mapLoadById(int map)
     scriptSetFixedParam(gMapSid, map);
 
     char name[16];
-    if (mapGetFileName(map, name) == -1) {
+    if (wmMapIdxToName(map, name) == -1) {
         return -1;
     }
 
@@ -774,7 +786,7 @@ int mapLoadById(int map)
 
     int rc = mapLoadByName(name);
 
-    worldmapStartMapMusic();
+    wmMapMusicStart();
 
     return rc;
 }
@@ -790,7 +802,7 @@ static int mapLoad(File* stream)
 
     int savedMouseCursorId = gameMouseGetCursor();
     gameMouseSetCursor(MOUSE_CURSOR_WAIT_PLANET);
-    fileSetReadProgressHandler(gameMouseRefresh, 32768);
+    fileSetReadProgressHandler(gameMouseRefreshImmediately, 32768);
     tileDisable();
 
     int rc = 0;
@@ -820,9 +832,8 @@ static int mapLoad(File* stream)
     }
 
     if (gEnteringElevation == -1) {
-        gEnteringElevation = gMapHeader.enteringElevation;
-        gEnteringTile = gMapHeader.enteringTile;
-        gEnteringRotation = gMapHeader.enteringRotation;
+        // NOTE: Uninline.
+        mapSetEnteringLocation(gMapHeader.enteringElevation, gMapHeader.enteringTile, gMapHeader.enteringRotation);
     }
 
     _obj_remove_all();
@@ -835,35 +846,27 @@ static int mapLoad(File* stream)
         gMapHeader.localVariablesCount = 0;
     }
 
-    error = "Error loading global vars";
-    mapGlobalVariablesFree();
-
-    if (gMapHeader.globalVariablesCount != 0) {
-        gMapGlobalVars = (int*)internal_malloc(sizeof(*gMapGlobalVars) * gMapHeader.globalVariablesCount);
-        if (gMapGlobalVars == NULL) {
-            goto err;
-        }
-
-        gMapGlobalVarsLength = gMapHeader.globalVariablesCount;
+    error = "Error allocating global vars";
+    // NOTE: Uninline.
+    if (mapGlobalVariablesInit(gMapHeader.globalVariablesCount) != 0) {
+        goto err;
     }
 
-    if (fileReadInt32List(stream, gMapGlobalVars, gMapGlobalVarsLength) != 0) {
+    error = "Error loading global vars";
+    // NOTE: Uninline.
+    if (mapGlobalVariablesLoad(stream) != 0) {
+        goto err;
+    }
+
+    error = "Error allocating local vars";
+    // NOTE: Uninline.
+    if (mapLocalVariablesInit(gMapHeader.localVariablesCount) != 0) {
         goto err;
     }
 
     error = "Error loading local vars";
-    mapLocalVariablesFree();
-
-    if (gMapHeader.localVariablesCount != 0) {
-        gMapLocalVars = (int*)internal_malloc(sizeof(*gMapLocalVars) * gMapHeader.localVariablesCount);
-        if (gMapLocalVars == NULL) {
-            goto err;
-        }
-
-        gMapLocalVarsLength = gMapHeader.localVariablesCount;
-    }
-
-    if (fileReadInt32List(stream, gMapLocalVars, gMapLocalVarsLength) != 0) {
+    // NOTE: Uninline.
+    if (mapLocalVariablesLoad(stream) != 0) {
         goto err;
     }
 
@@ -898,7 +901,7 @@ static int mapLoad(File* stream)
     lightSetLightLevel(LIGHT_LEVEL_MAX, false);
     objectSetLocation(gDude, gCenterTile, gElevation, NULL);
     objectSetRotation(gDude, gEnteringRotation, NULL);
-    gMapHeader.field_34 = mapGetIndexByFileName(gMapHeader.name);
+    gMapHeader.field_34 = wmMapMatchNameToIdx(gMapHeader.name);
 
     if ((gMapHeader.flags & 1) == 0) {
         char path[COMPAT_MAX_PATH];
@@ -946,7 +949,7 @@ static int mapLoad(File* stream)
         _scr_spatials_enable();
 
         error = "Error Setting up random encounter";
-        if (worldmapSetupRandomEncounter() == -1) {
+        if (wmSetupRandomEncounter() == -1) {
             goto err;
         }
     }
@@ -959,7 +962,7 @@ err:
         char message[100]; // TODO: Size is probably wrong.
         sprintf(message, "%s while loading map.", error);
         debugPrint(message);
-        _map_new_map();
+        mapNewMap();
         rc = -1;
     } else {
         _obj_preload_art_cache(gMapHeader.flags);
@@ -996,10 +999,10 @@ err:
         rc = -1;
     }
 
-    _wmMapMarkVisited(gMapHeader.field_34);
-    _wmMapMarkMapEntranceState(gMapHeader.field_34, gElevation, 1);
+    wmMapMarkVisited(gMapHeader.field_34);
+    wmMapMarkMapEntranceState(gMapHeader.field_34, gElevation, 1);
 
-    if (_wmCheckGameAreaEvents() != 0) {
+    if (wmCheckGameAreaEvents() != 0) {
         rc = -1;
     }
 
@@ -1011,9 +1014,8 @@ err:
 
     gameMouseSetCursor(savedMouseCursorId);
 
-    gEnteringElevation = -1;
-    gEnteringTile = -1;
-    gEnteringRotation = -1;
+    // NOTE: Uninline.
+    mapSetEnteringLocation(-1, -1, -1);
 
     gameMovieFadeOut();
 
@@ -1043,7 +1045,7 @@ int mapLoadSaved(char* fileName)
         }
     }
 
-    if (!_wmMapIsSaveable()) {
+    if (!wmMapIsSaveable()) {
         debugPrint("\nDestroying RANDOM encounter map.");
 
         char v15[16];
@@ -1062,7 +1064,7 @@ int mapLoadSaved(char* fileName)
 // 0x48328C
 static int _map_age_dead_critters()
 {
-    if (!_wmMapDeadBodiesAge()) {
+    if (!wmMapDeadBodiesAge()) {
         return 0;
     }
 
@@ -1078,7 +1080,7 @@ static int _map_age_dead_critters()
             && !objectIsPartyMember(obj)
             && !critterIsDead(obj)) {
             obj->data.critter.combat.maneuver &= ~CRITTER_MANUEVER_FLEEING;
-            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && _critter_flag_check(obj->pid, CRITTER_FLAG_0x200) == 0) {
+            if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !_critter_flag_check(obj->pid, CRITTER_NO_HEAL)) {
                 _critter_heal_hours(obj, hoursSinceLastVisit);
             }
         }
@@ -1103,7 +1105,7 @@ static int _map_age_dead_critters()
         int type = PID_TYPE(obj->pid);
         if (type == OBJ_TYPE_CRITTER) {
             if (obj != gDude && critterIsDead(obj)) {
-                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && _critter_flag_check(obj->pid, CRITTER_FLAG_0x200) == 0) {
+                if (critterGetKillType(obj) != KILL_TYPE_ROBOT && !_critter_flag_check(obj->pid, CRITTER_NO_HEAL)) {
                     objects[count++] = obj;
 
                     if (count >= capacity) {
@@ -1134,8 +1136,8 @@ static int _map_age_dead_critters()
     for (int index = 0; index < count; index++) {
         Object* obj = objects[index];
         if (PID_TYPE(obj->pid) == OBJ_TYPE_CRITTER) {
-            if (_critter_flag_check(obj->pid, CRITTER_FLAG_0x40) == 0) {
-                _item_drop_all(obj, obj->tile);
+            if (!_critter_flag_check(obj->pid, CRITTER_NO_DROP)) {
+                itemDropAll(obj, obj->tile);
             }
 
             Object* blood;
@@ -1150,7 +1152,7 @@ static int _map_age_dead_critters()
             protoGetProto(obj->pid, &proto);
 
             int frame = randomBetween(0, 3);
-            if ((proto->critter.flags & 0x800)) {
+            if ((proto->critter.flags & CRITTER_FLAT)) {
                 frame += 6;
             } else {
                 if (critterGetKillType(obj) != KILL_TYPE_RAT
@@ -1175,7 +1177,7 @@ static int _map_age_dead_critters()
 int _map_target_load_area()
 {
     int city = -1;
-    if (_wmMatchAreaContainingMapIdx(gMapHeader.field_34, &city) == -1) {
+    if (wmMatchAreaContainingMapIdx(gMapHeader.field_34, &city) == -1) {
         city = -1;
     }
     return city;
@@ -1215,13 +1217,13 @@ int mapHandleTransition()
     if (gMapTransition.map == -1) {
         if (!isInCombat()) {
             animationStop();
-            _wmTownMap();
+            wmTownMap();
             memset(&gMapTransition, 0, sizeof(gMapTransition));
         }
     } else if (gMapTransition.map == -2) {
         if (!isInCombat()) {
             animationStop();
-            _wmWorldMap();
+            wmWorldMap();
             memset(&gMapTransition, 0, sizeof(gMapTransition));
         }
     } else {
@@ -1245,8 +1247,8 @@ int mapHandleTransition()
             memset(&gMapTransition, 0, sizeof(gMapTransition));
 
             int city;
-            _wmMatchAreaContainingMapIdx(gMapHeader.field_34, &city);
-            if (_wmTeleportToArea(city) == -1) {
+            wmMatchAreaContainingMapIdx(gMapHeader.field_34, &city);
+            if (wmTeleportToArea(city) == -1) {
                 debugPrint("\nError: couldn't make jump on worldmap for map jump!");
             }
         }
@@ -1280,14 +1282,11 @@ static int _map_save()
     char temp[80];
     temp[0] = '\0';
 
-    char* masterPatchesPath;
-    if (configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_MASTER_PATCHES_KEY, &masterPatchesPath)) {
-        strcat(temp, masterPatchesPath);
-        compat_mkdir(temp);
+    strcat(temp, settings.system.master_patches_path.c_str());
+    compat_mkdir(temp);
 
-        strcat(temp, "\\MAPS");
-        compat_mkdir(temp);
-    }
+    strcat(temp, "\\MAPS");
+    compat_mkdir(temp);
 
     int rc = -1;
     if (gMapHeader.name[0] != '\0') {
@@ -1425,7 +1424,7 @@ int _map_save_in_game(bool a1)
 
     char name[16];
 
-    if (a1 && !_wmMapIsSaveable()) {
+    if (a1 && !wmMapIsSaveable()) {
         debugPrint("\nNot saving RANDOM encounter map.");
 
         strcpy(name, gMapHeader.name);
@@ -1462,13 +1461,7 @@ static void mapMakeMapsDirectory()
 {
     char path[COMPAT_MAX_PATH];
 
-    char* masterPatchesPath;
-    if (configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_MASTER_PATCHES_KEY, &masterPatchesPath)) {
-        strcpy(path, masterPatchesPath);
-    } else {
-        strcpy(path, "DATA");
-    }
-
+    strcpy(path, settings.system.master_patches_path.c_str());
     compat_mkdir(path);
 
     strcat(path, "\\MAPS");
@@ -1516,6 +1509,25 @@ static void isoWindowRefreshRectMapper(Rect* rect)
     _obj_render_post_roof(&clampedDirtyRect, gElevation);
 }
 
+// NOTE: Inlined.
+//
+// 0x483FE4
+static int mapGlobalVariablesInit(int count)
+{
+    mapGlobalVariablesFree();
+
+    if (count != 0) {
+        gMapGlobalVars = (int*)internal_malloc(sizeof(*gMapGlobalVars) * count);
+        if (gMapGlobalVars == NULL) {
+            return -1;
+        }
+    }
+
+    gMapGlobalVarsLength = count;
+
+    return 0;
+}
+
 // 0x484038
 static void mapGlobalVariablesFree()
 {
@@ -1526,6 +1538,39 @@ static void mapGlobalVariablesFree()
     }
 }
 
+// NOTE: Inlined.
+//
+// 0x48405C
+static int mapGlobalVariablesLoad(File* stream)
+{
+    if (fileReadInt32List(stream, gMapGlobalVars, gMapGlobalVarsLength) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+// NOTE: Inlined.
+//
+// 0x484080
+static int mapLocalVariablesInit(int count)
+{
+    mapLocalVariablesFree();
+
+    if (count != 0) {
+        gMapLocalVars = (int*)internal_malloc(sizeof(*gMapLocalVars) * count);
+        if (gMapLocalVars == NULL) {
+            return -1;
+        }
+
+        gMapLocalPointers.resize(count);
+    }
+
+    gMapLocalVarsLength = count;
+
+    return 0;
+}
+
 // 0x4840D4
 static void mapLocalVariablesFree()
 {
@@ -1534,6 +1579,20 @@ static void mapLocalVariablesFree()
         gMapLocalVars = NULL;
         gMapLocalVarsLength = 0;
     }
+
+    gMapLocalPointers.clear();
+}
+
+// NOTE: Inlined.
+//
+// 0x4840F8
+static int mapLocalVariablesLoad(File* stream)
+{
+    if (fileReadInt32List(stream, gMapLocalVars, gMapLocalVarsLength) != 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
 // 0x48411C
@@ -1561,6 +1620,16 @@ static void _map_place_dude_and_mouse()
 
     gameMouseResetBouncingCursorFid();
     gameMouseObjectsShow();
+}
+
+// NOTE: Inlined.
+//
+// 0x4841F0
+static void square_init()
+{
+    for (int elevation = 0; elevation < ELEVATION_COUNT; elevation++) {
+        _square[elevation] = &(_square_data[elevation]);
+    }
 }
 
 // 0x484210
@@ -1664,3 +1733,5 @@ static int mapHeaderRead(MapHeader* ptr, File* stream)
 
     return 0;
 }
+
+} // namespace fallout

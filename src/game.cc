@@ -1,5 +1,14 @@
 #include "game.h"
 
+#include <stdio.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h> // access
+#endif
+
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
@@ -9,7 +18,6 @@
 #include "color.h"
 #include "combat.h"
 #include "combat_ai.h"
-#include "core.h"
 #include "critter.h"
 #include "cycle.h"
 #include "db.h"
@@ -20,18 +28,20 @@
 #include "electronic_registration.h"
 #include "endgame.h"
 #include "font_manager.h"
-#include "game_config.h"
 #include "game_dialog.h"
 #include "game_memory.h"
 #include "game_mouse.h"
 #include "game_movie.h"
 #include "game_sound.h"
+#include "input.h"
 #include "interface.h"
 #include "inventory.h"
 #include "item.h"
+#include "kb.h"
 #include "loadsave.h"
 #include "map.h"
 #include "memory.h"
+#include "mouse.h"
 #include "movie.h"
 #include "movie_effect.h"
 #include "object.h"
@@ -45,26 +55,20 @@
 #include "queue.h"
 #include "random.h"
 #include "scripts.h"
+#include "settings.h"
 #include "sfall_config.h"
 #include "skill.h"
 #include "skilldex.h"
 #include "stat.h"
+#include "svga.h"
 #include "text_font.h"
 #include "tile.h"
 #include "trait.h"
-#include "trap.h"
 #include "version.h"
 #include "window_manager.h"
-#include "world_map.h"
+#include "worldmap.h"
 
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h> // access
-#endif
-
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 #define HELP_SCREEN_WIDTH (640)
 #define HELP_SCREEN_HEIGHT (480)
@@ -90,7 +94,7 @@ static char _aDec11199816543[] = VERSION_BUILD_TIME;
 static bool gGameUiDisabled = false;
 
 // 0x5186B8
-static int _game_state_cur = 0;
+static int gGameState = GAME_STATE_0;
 
 // 0x5186BC
 static bool gIsMapper = false;
@@ -135,12 +139,12 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
     // override it's file name.
     sfallConfigInit(argc, argv);
 
-    gameConfigInit(isMapper, argc, argv);
+    settingsInit(isMapper, argc, argv);
 
     gIsMapper = isMapper;
 
     if (gameDbInit() == -1) {
-        gameConfigExit(false);
+        settingsExit(false);
         sfallConfigExit();
         return -1;
     }
@@ -150,17 +154,15 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
     _initWindow(1, a4);
     paletteInit();
 
-    char* language;
-    if (configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_LANGUAGE_KEY, &language)) {
-        if (compat_stricmp(language, FRENCH) == 0) {
-            keyboardSetLayout(KEYBOARD_LAYOUT_FRENCH);
-        } else if (compat_stricmp(language, GERMAN) == 0) {
-            keyboardSetLayout(KEYBOARD_LAYOUT_GERMAN);
-        } else if (compat_stricmp(language, ITALIAN) == 0) {
-            keyboardSetLayout(KEYBOARD_LAYOUT_ITALIAN);
-        } else if (compat_stricmp(language, SPANISH) == 0) {
-            keyboardSetLayout(KEYBOARD_LAYOUT_SPANISH);
-        }
+    const char* language = settings.system.language.c_str();
+    if (compat_stricmp(language, FRENCH) == 0) {
+        keyboardSetLayout(KEYBOARD_LAYOUT_FRENCH);
+    } else if (compat_stricmp(language, GERMAN) == 0) {
+        keyboardSetLayout(KEYBOARD_LAYOUT_GERMAN);
+    } else if (compat_stricmp(language, ITALIAN) == 0) {
+        keyboardSetLayout(KEYBOARD_LAYOUT_ITALIAN);
+    } else if (compat_stricmp(language, SPANISH) == 0) {
+        keyboardSetLayout(KEYBOARD_LAYOUT_SPANISH);
     }
 
     // SFALL: Allow to skip splash screen
@@ -170,8 +172,6 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
     if (!gIsMapper && skipOpeningMovies < 2) {
         showSplash();
     }
-
-    _trap_init();
 
     interfaceFontsInit();
     fontManagerAdd(&gModernFontManager);
@@ -268,7 +268,7 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
 
     debugPrint(">scr_game_init\t");
 
-    if (worldmapInit() != 0) {
+    if (wmWorldMap_init() != 0) {
         debugPrint("Failed on wmWorldMap_init\n");
         return -1;
     }
@@ -376,7 +376,7 @@ void gameReset()
     _scr_reset();
     gameLoadGlobalVars();
     scriptsReset();
-    worldmapReset();
+    wmWorldMap_reset();
     partyMembersReset();
     characterEditorInit();
     pipboyReset();
@@ -425,21 +425,21 @@ void gameExit()
     badwordsExit();
     automapExit();
     paletteExit();
-    worldmapExit();
+    wmWorldMap_exit();
     partyMembersExit();
     endgameDeathEndingExit();
     interfaceFontsExit();
-    _trap_init();
     _windowClose();
     dbExit();
-    gameConfigExit(true);
+    settingsExit(true);
     sfallConfigExit();
 }
 
 // 0x442D44
 int gameHandleKey(int eventCode, bool isInCombatMode)
 {
-    if (_game_state_cur == 5) {
+    // NOTE: Uninline.
+    if (gameGetState() == GAME_STATE_5) {
         _gdialogSystemEnter();
     }
 
@@ -479,6 +479,8 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                 if (mouseX == _scr_size.left || mouseX == _scr_size.right
                     || mouseY == _scr_size.top || mouseY == _scr_size.bottom) {
                     _gmouse_clicked_on_edge = true;
+                } else {
+                    _gmouse_clicked_on_edge = false;
                 }
             }
         } else {
@@ -499,6 +501,31 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
     case -20:
         if (interfaceBarEnabled()) {
             _intface_use_item();
+        }
+        break;
+    case -2:
+        if (1) {
+            int mouseEvent = mouseGetEvent();
+            int mouseX;
+            int mouseY;
+            mouseGetPosition(&mouseX, &mouseY);
+
+            if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0) {
+                if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
+                    if (mouseX == _scr_size.left || mouseX == _scr_size.right
+                        || mouseY == _scr_size.top || mouseY == _scr_size.bottom) {
+                        _gmouse_clicked_on_edge = true;
+                    } else {
+                        _gmouse_clicked_on_edge = false;
+                    }
+                }
+            } else {
+                if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_UP) != 0) {
+                    _gmouse_clicked_on_edge = false;
+                }
+            }
+
+            _gmouse_handle_event(mouseX, mouseY, mouseEvent);
         }
         break;
     case KEY_CTRL_Q:
@@ -746,14 +773,14 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         break;
     case KEY_COMMA:
     case KEY_LESS:
-        if (reg_anim_begin(0) == 0) {
+        if (reg_anim_begin(ANIMATION_REQUEST_RESERVED) == 0) {
             animationRegisterRotateCounterClockwise(gDude);
             reg_anim_end();
         }
         break;
     case KEY_DOT:
     case KEY_GREATER:
-        if (reg_anim_begin(0) == 0) {
+        if (reg_anim_begin(ANIMATION_REQUEST_RESERVED) == 0) {
             animationRegisterRotateClockwise(gDude);
             reg_anim_end();
         }
@@ -867,8 +894,6 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         mapScroll(0, 1);
         break;
     }
-
-    // TODO: Incomplete.
 
     return 0;
 }
@@ -1016,48 +1041,48 @@ int globalVarsRead(const char* path, const char* section, int* variablesListLeng
 }
 
 // 0x443E2C
-int _game_state()
+int gameGetState()
 {
-    return _game_state_cur;
+    return gGameState;
 }
 
 // 0x443E34
-int _game_state_request(int a1)
+int gameRequestState(int newGameState)
 {
-    if (a1 == 0) {
-        a1 = 1;
-    } else if (a1 == 2) {
-        a1 = 3;
-    } else if (a1 == 4) {
-        a1 = 5;
+    switch (newGameState) {
+    case GAME_STATE_0:
+        newGameState = GAME_STATE_1;
+        break;
+    case GAME_STATE_2:
+        newGameState = GAME_STATE_3;
+        break;
+    case GAME_STATE_4:
+        newGameState = GAME_STATE_5;
+        break;
     }
 
-    if (_game_state_cur != 4 || a1 != 5) {
-        _game_state_cur = a1;
-        return 0;
+    if (gGameState == GAME_STATE_4 && newGameState == GAME_STATE_5) {
+        return -1;
     }
 
-    return -1;
+    gGameState = newGameState;
+    return 0;
 }
 
 // 0x443E90
-void _game_state_update()
+void gameUpdateState()
 {
-    int v0;
-
-    v0 = _game_state_cur;
-    switch (_game_state_cur) {
-    case 1:
-        v0 = 0;
+    switch (gGameState) {
+    case GAME_STATE_1:
+        gGameState = GAME_STATE_0;
         break;
-    case 3:
-        v0 = 2;
+    case GAME_STATE_3:
+        gGameState = GAME_STATE_2;
         break;
-    case 5:
-        v0 = 4;
+    case GAME_STATE_5:
+        gGameState = GAME_STATE_4;
+        break;
     }
-
-    _game_state_cur = v0;
 }
 
 // 0x443EF0
@@ -1113,22 +1138,28 @@ static void showHelp()
     if (win != -1) {
         unsigned char* windowBuffer = windowGetBuffer(win);
         if (windowBuffer != NULL) {
+            FrmImage backgroundFrmImage;
             int backgroundFid = buildFid(OBJ_TYPE_INTERFACE, 297, 0, 0, 0);
-            CacheEntry* backgroundHandle;
-            unsigned char* backgroundData = artLockFrameData(backgroundFid, 0, 0, &backgroundHandle);
-            if (backgroundData != NULL) {
+            if (backgroundFrmImage.lock(backgroundFid)) {
                 paletteSetEntries(gPaletteBlack);
-                blitBufferToBuffer(backgroundData, HELP_SCREEN_WIDTH, HELP_SCREEN_HEIGHT, HELP_SCREEN_WIDTH, windowBuffer, HELP_SCREEN_WIDTH);
-                artUnlock(backgroundHandle);
+                blitBufferToBuffer(backgroundFrmImage.getData(), HELP_SCREEN_WIDTH, HELP_SCREEN_HEIGHT, HELP_SCREEN_WIDTH, windowBuffer, HELP_SCREEN_WIDTH);
                 windowUnhide(win);
                 colorPaletteLoad("art\\intrface\\helpscrn.pal");
                 paletteSetEntries(_cmap);
 
-                while (_get_input() == -1 && _game_user_wants_to_quit == 0) {
+                while (inputGetInput() == -1 && _game_user_wants_to_quit == 0) {
+                    sharedFpsLimiter.mark();
+                    renderPresent();
+                    sharedFpsLimiter.throttle();
                 }
 
                 while (mouseGetEvent() != 0) {
-                    _get_input();
+                    sharedFpsLimiter.mark();
+
+                    inputGetInput();
+
+                    renderPresent();
+                    sharedFpsLimiter.throttle();
                 }
 
                 paletteSetEntries(gPaletteBlack);
@@ -1210,8 +1241,8 @@ int showQuitConfirmationDialog()
 static int gameDbInit()
 {
     int hashing;
-    char* main_file_name;
-    char* patch_file_name;
+    const char* main_file_name;
+    const char* patch_file_name;
     int patch_index;
     char filename[COMPAT_MAX_PATH];
 
@@ -1219,16 +1250,16 @@ static int gameDbInit()
     main_file_name = NULL;
     patch_file_name = NULL;
 
-    if (configGetInt(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_HASHING_KEY, &hashing)) {
+    if (settings.system.hashing) {
         _db_enable_hash_table_();
     }
 
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_MASTER_DAT_KEY, &main_file_name);
+    main_file_name = settings.system.master_dat_path.c_str();
     if (*main_file_name == '\0') {
         main_file_name = NULL;
     }
 
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_MASTER_PATCHES_KEY, &patch_file_name);
+    patch_file_name = settings.system.master_patches_path.c_str();
     if (*patch_file_name == '\0') {
         patch_file_name = NULL;
     }
@@ -1239,12 +1270,12 @@ static int gameDbInit()
         return -1;
     }
 
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_CRITTER_DAT_KEY, &main_file_name);
+    main_file_name = settings.system.critter_dat_path.c_str();
     if (*main_file_name == '\0') {
         main_file_name = NULL;
     }
 
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_CRITTER_PATCHES_KEY, &patch_file_name);
+    patch_file_name = settings.system.critter_patches_path.c_str();
     if (*patch_file_name == '\0') {
         patch_file_name = NULL;
     }
@@ -1272,12 +1303,11 @@ static int gameDbInit()
 // 0x444384
 static void showSplash()
 {
-    int splash;
-    configGetInt(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_SPLASH_KEY, &splash);
+    int splash = settings.system.splash;
 
     char path[64];
-    char* language;
-    if (configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_LANGUAGE_KEY, &language) && compat_stricmp(language, ENGLISH) != 0) {
+    const char* language = settings.system.language.c_str();
+    if (compat_stricmp(language, ENGLISH) != 0) {
         sprintf(path, "art\\%s\\splash\\", language);
     } else {
         sprintf(path, "art\\splash\\");
@@ -1330,5 +1360,54 @@ static void showSplash()
     internal_free(data);
     internal_free(palette);
 
-    configSetInt(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_SPLASH_KEY, splash + 1);
+    settings.system.splash = splash + 1;
 }
+
+int gameShowDeathDialog(const char* message)
+{
+    bool isoWasEnabled = isoDisable();
+
+    bool gameMouseWasVisible;
+    if (isoWasEnabled) {
+        gameMouseWasVisible = gameMouseObjectsIsVisible();
+    } else {
+        gameMouseWasVisible = false;
+    }
+
+    if (gameMouseWasVisible) {
+        gameMouseObjectsHide();
+    }
+
+    bool cursorWasHidden = cursorIsHidden();
+    if (cursorWasHidden) {
+        mouseShowCursor();
+    }
+
+    int oldCursor = gameMouseGetCursor();
+    gameMouseSetCursor(MOUSE_CURSOR_ARROW);
+
+    int oldUserWantsToQuit = _game_user_wants_to_quit;
+    _game_user_wants_to_quit = 0;
+
+    int rc = showDialogBox(message, 0, 0, 169, 117, _colorTable[32328], NULL, _colorTable[32328], DIALOG_BOX_LARGE);
+
+    _game_user_wants_to_quit = oldUserWantsToQuit;
+
+    gameMouseSetCursor(oldCursor);
+
+    if (cursorWasHidden) {
+        mouseHideCursor();
+    }
+
+    if (gameMouseWasVisible) {
+        gameMouseObjectsShow();
+    }
+
+    if (isoWasEnabled) {
+        isoEnable();
+    }
+
+    return rc;
+}
+
+} // namespace fallout

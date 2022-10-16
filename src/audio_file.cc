@@ -1,14 +1,16 @@
 #include "audio_file.h"
 
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "debug.h"
 #include "memory_manager.h"
 #include "platform_compat.h"
 #include "pointer_registry.h"
 #include "sound.h"
 
-#include <assert.h>
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 static bool _defaultCompressionFunc__(char* filePath);
 static int audioFileSoundDecoderReadHandler(int fileHandle, void* buffer, unsigned int size);
@@ -103,7 +105,7 @@ int audioFileOpen(const char* fname, int flags, ...)
         audioFile->soundDecoder = soundDecoderInit(audioFileSoundDecoderReadHandler, audioFile->fileHandle, &(audioFile->field_14), &(audioFile->field_10), &(audioFile->fileSize));
         audioFile->fileSize *= 2;
     } else {
-        audioFile->fileSize = compat_filelength(fileno(stream));
+        audioFile->fileSize = getFileSize(stream);
     }
 
     audioFile->position = 0;
@@ -249,3 +251,5 @@ void audioFileExit()
     gAudioFileListLength = 0;
     gAudioFileList = NULL;
 }
+
+} // namespace fallout

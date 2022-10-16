@@ -1,11 +1,13 @@
 #include "db.h"
 
-#include "platform_compat.h"
-#include "xfile.h"
-
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "platform_compat.h"
+#include "xfile.h"
+
+namespace fallout {
 
 typedef struct FileList {
     XList xlist;
@@ -655,7 +657,7 @@ int fileNameListInit(const char* pattern, char*** fileNameListPtr, int a3, int a
                 char path[COMPAT_MAX_PATH];
                 sprintf(path, "%s%s", fileName, extension);
                 free(xlist->fileNames[length]);
-                xlist->fileNames[length] = strdup(path);
+                xlist->fileNames[length] = compat_strdup(path);
                 length++;
             }
         }
@@ -738,3 +740,5 @@ int _db_list_compare(const void* p1, const void* p2)
 {
     return compat_stricmp(*(const char**)p1, *(const char**)p2);
 }
+
+} // namespace fallout

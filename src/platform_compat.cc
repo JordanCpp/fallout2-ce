@@ -1,6 +1,5 @@
 #include "platform_compat.h"
 
-#include <SDL.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -24,6 +23,10 @@
 #else
 #include <chrono>
 #endif
+
+#include <SDL.h>
+
+namespace fallout {
 
 int compat_stricmp(const char* string1, const char* string2)
 {
@@ -286,3 +289,21 @@ void compat_windows_path_to_native(char* path)
     }
 #endif
 }
+
+char* compat_strdup(const char* string)
+{
+    return SDL_strdup(string);
+}
+
+// It's a replacement for compat_filelength(fileno(stream)) on platforms without
+// fileno defined.
+long getFileSize(FILE* stream)
+{
+    long originalOffset = ftell(stream);
+    fseek(stream, 0, SEEK_END);
+    long filesize = ftell(stream);
+    fseek(stream, originalOffset, SEEK_SET);
+    return filesize;
+}
+
+} // namespace fallout

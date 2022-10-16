@@ -1,5 +1,10 @@
 #include "sound_effects_list.h"
 
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "db.h"
 #include "debug.h"
 #include "memory.h"
@@ -7,10 +12,7 @@
 #include "pointer_registry.h"
 #include "sound_decoder.h"
 
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+namespace fallout {
 
 typedef struct SoundEffectsListEntry {
     char* name;
@@ -470,3 +472,5 @@ static int _sfxl_ad_reader(int fileHandle, void* buf, unsigned int size)
 {
     return fileRead(buf, 1, size, (File*)intToPtr(fileHandle));
 }
+
+} // namespace fallout

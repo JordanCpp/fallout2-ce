@@ -1,23 +1,26 @@
 #include "game_movie.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "color.h"
-#include "core.h"
 #include "cycle.h"
 #include "debug.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_mouse.h"
 #include "game_sound.h"
+#include "input.h"
+#include "mouse.h"
 #include "movie.h"
 #include "movie_effect.h"
 #include "palette.h"
 #include "platform_compat.h"
+#include "settings.h"
+#include "svga.h"
 #include "text_font.h"
-#include "widget.h"
 #include "window_manager.h"
 
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 #define GAME_MOVIE_WINDOW_WIDTH 640
 #define GAME_MOVIE_WINDOW_HEIGHT 480
@@ -140,13 +143,7 @@ int gameMoviePlay(int movie, int flags)
     const char* movieFileName = gMovieFileNames[movie];
     debugPrint("\nPlaying movie: %s\n", movieFileName);
 
-    char* language;
-    if (!configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_LANGUAGE_KEY, &language)) {
-        debugPrint("\ngmovie_play() - Error: Unable to determine language!\n");
-        gGameMovieIsPlaying = false;
-        return -1;
-    }
-
+    const char* language = settings.system.language.c_str();
     char movieFilePath[COMPAT_MAX_PATH];
     int movieFileSize;
     bool movieFound = false;
@@ -193,9 +190,8 @@ int gameMoviePlay(int movie, int flags)
 
     windowRefresh(win);
 
-    bool subtitlesEnabled = false;
+    bool subtitlesEnabled = settings.preferences.subtitles;
     int v1 = 4;
-    configGetBool(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_SUBTITLES_KEY, &subtitlesEnabled);
     if (subtitlesEnabled) {
         char* subtitlesFilePath = gameMovieBuildSubtitlesFilePath(movieFilePath);
 
@@ -221,11 +217,11 @@ int gameMoviePlay(int movie, int flags)
 
         colorPaletteLoad(subtitlesPaletteFilePath);
 
-        oldTextColor = widgetGetTextColor();
-        widgetSetTextColor(1.0, 1.0, 1.0);
+        oldTextColor = windowGetTextColor();
+        windowSetTextColor(1.0, 1.0, 1.0);
 
         oldFont = fontGetCurrent();
-        widgetSetFont(101);
+        windowSetFont(101);
     }
 
     bool cursorWasHidden = cursorIsHidden();
@@ -249,7 +245,7 @@ int gameMoviePlay(int movie, int flags)
     int v11 = 0;
     int buttons;
     do {
-        if (!_moviePlaying() || _game_user_wants_to_quit || _get_input() != -1) {
+        if (!_moviePlaying() || _game_user_wants_to_quit || inputGetInput() != -1) {
             break;
         }
 
@@ -278,12 +274,12 @@ int gameMoviePlay(int movie, int flags)
     if (subtitlesEnabled) {
         colorPaletteLoad("color.pal");
 
-        widgetSetFont(oldFont);
+        windowSetFont(oldFont);
 
         float r = (float)((_Color2RGB_(oldTextColor) & 0x7C00) >> 10) * flt_50352A;
         float g = (float)((_Color2RGB_(oldTextColor) & 0x3E0) >> 5) * flt_50352A;
         float b = (float)(_Color2RGB_(oldTextColor) & 0x1F) * flt_50352A;
-        widgetSetTextColor(r, g, b);
+        windowSetTextColor(r, g, b);
     }
 
     windowDestroy(win);
@@ -329,9 +325,6 @@ bool gameMovieIsPlaying()
 // 0x44EB1C
 static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath)
 {
-    char* language;
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_LANGUAGE_KEY, &language);
-
     char* path = movieFilePath;
 
     char* separator = strrchr(path, '\\');
@@ -339,7 +332,7 @@ static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath)
         path = separator + 1;
     }
 
-    sprintf(gGameMovieSubtitlesFilePath, "text\\%s\\cuts\\%s", language, path);
+    sprintf(gGameMovieSubtitlesFilePath, "text\\%s\\cuts\\%s", settings.system.language.c_str(), path);
 
     char* pch = strrchr(gGameMovieSubtitlesFilePath, '.');
     if (*pch != '\0') {
@@ -350,3 +343,5 @@ static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath)
 
     return gGameMovieSubtitlesFilePath;
 }
+
+} // namespace fallout

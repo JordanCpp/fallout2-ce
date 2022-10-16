@@ -1,15 +1,17 @@
 #include "config.h"
 
-#include "db.h"
-#include "memory.h"
-#include "platform_compat.h"
-
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "db.h"
+#include "memory.h"
+#include "platform_compat.h"
+
+namespace fallout {
 
 #define CONFIG_FILE_MAX_LINE_LENGTH (256)
 
@@ -469,7 +471,7 @@ static bool configTrimString(char* string)
         return false;
     }
 
-    int length = strlen(string);
+    size_t length = strlen(string);
     if (length == 0) {
         return true;
     }
@@ -547,3 +549,5 @@ bool configSetBool(Config* config, const char* sectionKey, const char* key, bool
 {
     return configSetInt(config, sectionKey, key, value ? 1 : 0);
 }
+
+} // namespace fallout

@@ -1,17 +1,20 @@
 #include "combat_ai.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
 #include "combat.h"
 #include "config.h"
-#include "core.h"
 #include "critter.h"
 #include "debug.h"
 #include "display_monitor.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_sound.h"
+#include "input.h"
 #include "interface.h"
 #include "item.h"
 #include "light.h"
@@ -25,14 +28,14 @@
 #include "proto_instance.h"
 #include "random.h"
 #include "scripts.h"
+#include "settings.h"
 #include "skill.h"
 #include "stat.h"
+#include "svga.h"
 #include "text_object.h"
 #include "tile.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+namespace fallout {
 
 #define AI_PACKET_CHEM_PRIMARY_DESIRE_COUNT (3)
 
@@ -99,13 +102,16 @@ static void _ai_run_away(Object* a1, Object* a2);
 static int _ai_move_away(Object* a1, Object* a2, int a3);
 static bool _ai_find_friend(Object* a1, int a2, int a3);
 static int _compare_nearer(const void* a1, const void* a2);
+static void _ai_sort_list_distance(Object** critterList, int length, Object* origin);
 static int _compare_strength(const void* p1, const void* p2);
+static void _ai_sort_list_strength(Object** critterList, int length);
 static int _compare_weakness(const void* p1, const void* p2);
+static void _ai_sort_list_weakness(Object** critterList, int length);
 static Object* _ai_find_nearest_team(Object* a1, Object* a2, int a3);
 static Object* _ai_find_nearest_team_in_combat(Object* a1, Object* a2, int a3);
 static int _ai_find_attackers(Object* a1, Object** a2, Object** a3, Object** a4);
 static Object* _ai_danger_source(Object* a1);
-static int _ai_have_ammo(Object* critter_obj, Object* weapon_obj, Object** out_ammo_obj);
+static bool aiHaveAmmo(Object* critter, Object* weapon, Object** ammoPtr);
 static bool _caiHasWeapPrefType(AiPacket* ai, int attackType);
 static Object* _ai_best_weapon(Object* a1, Object* a2, Object* a3, Object* a4);
 static bool _ai_can_use_weapon(Object* critter, Object* weapon, int hitMode);
@@ -114,9 +120,10 @@ static Object* _ai_search_environ(Object* critter, int itemType);
 static Object* _ai_retrieve_object(Object* a1, Object* a2);
 static int _ai_pick_hit_mode(Object* a1, Object* a2, Object* a3);
 static int _ai_move_steps_closer(Object* a1, Object* a2, int actionPoints, int a4);
+static int _ai_move_closer(Object* a1, Object* a2, int a3);
 static int _cai_retargetTileFromFriendlyFire(Object* source, Object* target, int* tilePtr);
 static int _cai_retargetTileFromFriendlyFireSubFunc(AiRetargetData* aiRetargetData, int tile);
-static bool _cai_attackWouldIntersect(Object* a1, Object* a2, Object* a3, int tile, int* distance);
+static bool _cai_attackWouldIntersect(Object* attacker, Object* defender, Object* attackerFriend, int tile, int* distance);
 static int _ai_switch_weapons(Object* a1, int* hitMode, Object** weapon, Object* a4);
 static int _ai_called_shot(Object* a1, Object* a2, int a3);
 static int _ai_attack(Object* a1, Object* a2, int a3);
@@ -291,7 +298,7 @@ static char _attack_str[268];
 // parse hurt_too_much
 static void _parse_hurt_str(char* str, int* valuePtr)
 {
-    int v5, v10;
+    size_t v5, v10;
     char tmp;
     int i;
 
@@ -1236,6 +1243,15 @@ static int _compare_nearer(const void* a1, const void* a2)
     }
 }
 
+// NOTE: Inlined.
+//
+// 0x428B74
+static void _ai_sort_list_distance(Object** critterList, int length, Object* origin)
+{
+    _combat_obj = origin;
+    qsort(critterList, length, sizeof(*critterList), _compare_nearer);
+}
+
 // qsort compare function - melee then ranged.
 //
 // 0x428B8C
@@ -1268,6 +1284,14 @@ static int _compare_strength(const void* p1, const void* p2)
     }
 
     return 0;
+}
+
+// NOTE: Inlined.
+//
+// 0x428BD0
+static void _ai_sort_list_strength(Object** critterList, int length)
+{
+    qsort(critterList, length, sizeof(*critterList), _compare_strength);
 }
 
 // qsort compare unction - ranged then melee
@@ -1304,6 +1328,14 @@ static int _compare_weakness(const void* p1, const void* p2)
     return 0;
 }
 
+// NOTE: Inlined.
+//
+// 0x428C28
+static void _ai_sort_list_weakness(Object** critterList, int length)
+{
+    qsort(critterList, length, sizeof(*critterList), _compare_weakness);
+}
+
 // 0x428C3C
 static Object* _ai_find_nearest_team(Object* a1, Object* a2, int a3)
 {
@@ -1318,8 +1350,8 @@ static Object* _ai_find_nearest_team(Object* a1, Object* a2, int a3)
         return NULL;
     }
 
-    _combat_obj = a1;
-    qsort(_curr_crit_list, _curr_crit_num, sizeof(*_curr_crit_list), _compare_nearer);
+    // NOTE: Uninline.
+    _ai_sort_list_distance(_curr_crit_list, _curr_crit_num, a1);
 
     for (i = 0; i < _curr_crit_num; i++) {
         obj = _curr_crit_list[i];
@@ -1344,8 +1376,8 @@ static Object* _ai_find_nearest_team_in_combat(Object* a1, Object* a2, int a3)
 
     int team = a2->data.critter.combat.team;
 
-    _combat_obj = a1;
-    qsort(_curr_crit_list, _curr_crit_num, sizeof(*_curr_crit_list), _compare_nearer);
+    // NOTE: Uninline.
+    _ai_sort_list_distance(_curr_crit_list, _curr_crit_num, a1);
 
     for (int index = 0; index < _curr_crit_num; index++) {
         Object* obj = _curr_crit_list[index];
@@ -1381,8 +1413,8 @@ static int _ai_find_attackers(Object* a1, Object** a2, Object** a3, Object** a4)
         return 0;
     }
 
-    _combat_obj = a1;
-    qsort(_curr_crit_list, _curr_crit_num, sizeof(*_curr_crit_list), _compare_nearer);
+    // NOTE: Uninline.
+    _ai_sort_list_distance(_curr_crit_list, _curr_crit_num, a1);
 
     int foundTargetCount = 0;
     int team = a1->data.critter.combat.team;
@@ -1471,7 +1503,7 @@ static Object* _ai_danger_source(Object* a1)
             }
 
             if (pathfinderFindPath(a1, a1->tile, gDude->data.critter.combat.whoHitMe->tile, NULL, 0, _obj_blocking_at) == 0
-                && _combat_check_bad_shot(a1, candidate, HIT_MODE_RIGHT_WEAPON_PRIMARY, false) != 0) {
+                && _combat_check_bad_shot(a1, candidate, HIT_MODE_RIGHT_WEAPON_PRIMARY, false) != COMBAT_BAD_SHOT_OK) {
                 debugPrint("\nai_danger_source: %s couldn't attack at target!  Picking alternate!", critterGetName(a1));
                 break;
             }
@@ -1521,27 +1553,26 @@ static Object* _ai_danger_source(Object* a1)
         }
     }
 
-    int (*compareProc)(const void*, const void*);
     switch (attackWho) {
     case ATTACK_WHO_STRONGEST:
-        compareProc = _compare_strength;
+        // NOTE: Uninline.
+        _ai_sort_list_strength(targets, 4);
         break;
     case ATTACK_WHO_WEAKEST:
-        compareProc = _compare_weakness;
+        // NOTE: Uninline.
+        _ai_sort_list_weakness(targets, 4);
         break;
     default:
-        compareProc = _compare_nearer;
-        _combat_obj = a1;
+        // NOTE: Uninline.
+        _ai_sort_list_distance(targets, 4, a1);
         break;
     }
 
-    qsort(targets, 4, sizeof(*targets), compareProc);
-
     for (int index = 0; index < 4; index++) {
         Object* candidate = targets[index];
-        if (candidate != NULL && objectCanHearObject(a1, candidate)) {
+        if (candidate != NULL && isWithinPerception(a1, candidate)) {
             if (pathfinderFindPath(a1, a1->tile, candidate->tile, NULL, 0, _obj_blocking_at) != 0
-                || _combat_check_bad_shot(a1, candidate, HIT_MODE_RIGHT_WEAPON_PRIMARY, false) == 0) {
+                || _combat_check_bad_shot(a1, candidate, HIT_MODE_RIGHT_WEAPON_PRIMARY, false) == COMBAT_BAD_SHOT_OK) {
                 return candidate;
             }
             debugPrint("\nai_danger_source: I couldn't get at my target!  Picking alternate!");
@@ -1619,44 +1650,41 @@ void _caiTeamCombatExit()
 }
 
 // 0x4292D4
-static int _ai_have_ammo(Object* critter_obj, Object* weapon_obj, Object** out_ammo_obj)
+static bool aiHaveAmmo(Object* critter, Object* weapon, Object** ammoPtr)
 {
-    int v9;
-    Object* ammo_obj;
-
-    if (out_ammo_obj) {
-        *out_ammo_obj = NULL;
+    if (ammoPtr != NULL) {
+        *ammoPtr = NULL;
     }
 
-    if (weapon_obj->pid == PROTO_ID_SOLAR_SCORCHER) {
+    if (weapon->pid == PROTO_ID_SOLAR_SCORCHER) {
         return lightGetLightLevel() > 62259;
     }
 
-    v9 = -1;
+    int inventoryItemIndex = -1;
 
     while (1) {
-        ammo_obj = _inven_find_type(critter_obj, 4, &v9);
-        if (ammo_obj == NULL) {
+        Object* ammo = _inven_find_type(critter, ITEM_TYPE_AMMO, &inventoryItemIndex);
+        if (ammo == NULL) {
             break;
         }
 
-        if (weaponCanBeReloadedWith(weapon_obj, ammo_obj)) {
-            if (out_ammo_obj) {
-                *out_ammo_obj = ammo_obj;
+        if (weaponCanBeReloadedWith(weapon, ammo)) {
+            if (ammoPtr != NULL) {
+                *ammoPtr = ammo;
             }
-            return 1;
+            return true;
         }
 
-        if (weaponGetAnimationCode(weapon_obj)) {
-            if (_item_w_range(critter_obj, 2) < 3) {
-                _inven_unwield(critter_obj, 1);
+        if (weaponGetAnimationCode(weapon)) {
+            if (weaponGetRange(critter, HIT_MODE_RIGHT_WEAPON_PRIMARY) < 3) {
+                _inven_unwield(critter, HAND_RIGHT);
             }
         } else {
-            _inven_unwield(critter_obj, 1);
+            _inven_unwield(critter, HAND_RIGHT);
         }
     }
 
-    return 0;
+    return false;
 }
 
 // 0x42938C
@@ -1716,7 +1744,7 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
 
         // SFALL: Fix avg damage calculation.
         avgDamage1 = (maxDamage + minDamage) / 2;
-        if (_item_w_area_damage_radius(weapon1, HIT_MODE_RIGHT_WEAPON_PRIMARY) > 0 && defender != NULL) {
+        if (weaponGetDamageRadius(weapon1, HIT_MODE_RIGHT_WEAPON_PRIMARY) > 0 && defender != NULL) {
             attack.weapon = weapon1;
             _compute_explosion_on_extras(&attack, 0, weaponIsGrenade(weapon1), 1);
             avgDamage1 *= attack.extrasLength + 1;
@@ -1734,12 +1762,12 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
             }
         }
 
-        if (weaponIsNatural(weapon1)) {
+        if (itemIsHidden(weapon1)) {
             return weapon1;
         }
     } else {
         distance = objectGetDistanceBetween(attacker, defender);
-        if (_item_w_range(attacker, HIT_MODE_PUNCH) >= distance) {
+        if (weaponGetRange(attacker, HIT_MODE_PUNCH) >= distance) {
             attackType1 = ATTACK_TYPE_UNARMED;
         }
     }
@@ -1761,7 +1789,7 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
 
         // SFALL: Fix avg damage calculation.
         avgDamage2 = (maxDamage + minDamage) / 2;
-        if (_item_w_area_damage_radius(weapon2, HIT_MODE_RIGHT_WEAPON_PRIMARY) > 0 && defender != NULL) {
+        if (weaponGetDamageRadius(weapon2, HIT_MODE_RIGHT_WEAPON_PRIMARY) > 0 && defender != NULL) {
             attack.weapon = weapon2;
             _compute_explosion_on_extras(&attack, 0, weaponIsGrenade(weapon2), 1);
             avgDamage2 *= attack.extrasLength + 1;
@@ -1778,7 +1806,7 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
             }
         }
 
-        if (weaponIsNatural(weapon2)) {
+        if (itemIsHidden(weapon2)) {
             return weapon2;
         }
     } else {
@@ -1786,7 +1814,7 @@ static Object* _ai_best_weapon(Object* attacker, Object* weapon1, Object* weapon
             distance = objectGetDistanceBetween(attacker, weapon1);
         }
 
-        if (_item_w_range(attacker, HIT_MODE_PUNCH) >= distance) {
+        if (weaponGetRange(attacker, HIT_MODE_PUNCH) >= distance) {
             attackType2 = ATTACK_TYPE_UNARMED;
         }
     }
@@ -1882,7 +1910,7 @@ Object* _ai_search_inven_weap(Object* critter, int a2, Object* a3)
         }
 
         if (a2) {
-            if (weaponGetActionPointCost1(weapon) > critter->data.critter.combat.ap) {
+            if (weaponGetPrimaryActionPointCost(weapon) > critter->data.critter.combat.ap) {
                 continue;
             }
         }
@@ -1893,7 +1921,7 @@ Object* _ai_search_inven_weap(Object* critter, int a2, Object* a3)
 
         if (weaponGetAttackTypeForHitMode(weapon, HIT_MODE_RIGHT_WEAPON_PRIMARY) == ATTACK_TYPE_RANGED) {
             if (ammoGetQuantity(weapon) == 0) {
-                if (!_ai_have_ammo(critter, weapon, NULL)) {
+                if (!aiHaveAmmo(critter, weapon, NULL)) {
                     continue;
                 }
             }
@@ -2025,8 +2053,8 @@ static Object* _ai_search_environ(Object* critter, int itemType)
         return NULL;
     }
 
-    _combat_obj = critter;
-    qsort(objects, count, sizeof(*objects), _compare_nearer);
+    // NOTE: Uninline.
+    _ai_sort_list_distance(objects, count, critter);
 
     int perception = critterGetStat(critter, STAT_PERCEPTION) + 5;
     Object* item2 = critterGetItem2(critter);
@@ -2159,6 +2187,20 @@ static int _ai_pick_hit_mode(Object* a1, Object* a2, Object* a3)
         }
     }
 
+    // SFALL: Add a check for the weapon range and the AP cost when AI is
+    // choosing weapon attack modes.
+    if (useSecondaryMode) {
+        if (objectGetDistanceBetween(a1, a3) > weaponGetRange(a1, HIT_MODE_RIGHT_WEAPON_SECONDARY)) {
+            useSecondaryMode = false;
+        }
+    }
+
+    if (useSecondaryMode) {
+        if (a1->data.critter.combat.ap < weaponGetActionPointCost(a1, HIT_MODE_RIGHT_WEAPON_SECONDARY, false)) {
+            useSecondaryMode = false;
+        }
+    }
+
     if (useSecondaryMode) {
         if (attackType != ATTACK_TYPE_THROW
             || _ai_search_inven_weap(a1, 0, a3) != NULL
@@ -2262,6 +2304,14 @@ static int _ai_move_steps_closer(Object* a1, Object* a2, int actionPoints, int a
     return 0;
 }
 
+// NOTE: Inlined.
+//
+// 0x42A1C0
+static int _ai_move_closer(Object* a1, Object* a2, int a3)
+{
+    return _ai_move_steps_closer(a1, a2, a1->data.critter.combat.ap, a3);
+}
+
 // 0x42A1D4
 static int _cai_retargetTileFromFriendlyFire(Object* source, Object* target, int* tilePtr)
 {
@@ -2317,9 +2367,8 @@ static int _cai_retargetTileFromFriendlyFire(Object* source, Object* target, int
         }
     }
 
-    _combat_obj = source;
-
-    qsort(aiRetargetData.critterList, aiRetargetData.critterCount, sizeof(*aiRetargetData.critterList), _compare_nearer);
+    // NOTE: Uninline.
+    _ai_sort_list_distance(aiRetargetData.critterList, aiRetargetData.critterCount, source);
 
     if (_cai_retargetTileFromFriendlyFireSubFunc(&aiRetargetData, *tilePtr) == 0) {
         int minDistance = 99999;
@@ -2375,27 +2424,27 @@ static int _cai_retargetTileFromFriendlyFireSubFunc(AiRetargetData* aiRetargetDa
 }
 
 // 0x42A518
-static bool _cai_attackWouldIntersect(Object* a1, Object* a2, Object* a3, int tile, int* distance)
+static bool _cai_attackWouldIntersect(Object* attacker, Object* defender, Object* attackerFriend, int tile, int* distance)
 {
     int hitMode = HIT_MODE_RIGHT_WEAPON_PRIMARY;
     bool aiming = false;
-    if (a1 == gDude) {
+    if (attacker == gDude) {
         interfaceGetCurrentHitMode(&hitMode, &aiming);
     }
 
-    Object* v8 = critterGetWeaponForHitMode(a1, hitMode);
-    if (v8 == NULL) {
+    Object* weapon = critterGetWeaponForHitMode(attacker, hitMode);
+    if (weapon == NULL) {
         return false;
     }
 
-    if (_item_w_range(a1, hitMode) < 1) {
+    if (weaponGetRange(attacker, hitMode) < 1) {
         return false;
     }
 
     Object* object = NULL;
-    _make_straight_path_func(a1, a1->tile, a2->tile, NULL, &object, 32, _obj_shoot_blocking_at);
-    if (object != a3) {
-        if (!_combatTestIncidentalHit(a1, a2, a3, v8)) {
+    _make_straight_path_func(attacker, attacker->tile, defender->tile, NULL, &object, 32, _obj_shoot_blocking_at);
+    if (object != attackerFriend) {
+        if (!_combatTestIncidentalHit(attacker, defender, attackerFriend, weapon)) {
             return false;
         }
     }
@@ -2416,7 +2465,7 @@ static int _ai_switch_weapons(Object* a1, int* hitMode, Object** weapon, Object*
     } else {
         Object* v8 = _ai_search_environ(a1, ITEM_TYPE_WEAPON);
         if (v8 == NULL) {
-            if (_item_w_mp_cost(a1, *hitMode, 0) <= a1->data.critter.combat.ap) {
+            if (weaponGetActionPointCost(a1, *hitMode, 0) <= a1->data.critter.combat.ap) {
                 return 0;
             }
 
@@ -2433,7 +2482,7 @@ static int _ai_switch_weapons(Object* a1, int* hitMode, Object** weapon, Object*
     if (*weapon != NULL) {
         _inven_wield(a1, *weapon, 1);
         _combat_turn_run();
-        if (_item_w_mp_cost(a1, *hitMode, 0) <= a1->data.critter.combat.ap) {
+        if (weaponGetActionPointCost(a1, *hitMode, 0) <= a1->data.critter.combat.ap) {
             return 0;
         }
     }
@@ -2452,12 +2501,11 @@ static int _ai_called_shot(Object* a1, Object* a2, int a3)
 
     v5 = 3;
 
-    if (_item_w_mp_cost(a1, a3, 1) <= a1->data.critter.combat.ap) {
-        if (_item_w_called_shot(a1, a3)) {
+    if (weaponGetActionPointCost(a1, a3, 1) <= a1->data.critter.combat.ap) {
+        if (critterCanAim(a1, a3)) {
             ai = aiGetPacket(a1);
             if (randomBetween(1, ai->called_freq) == 1) {
-                combat_difficulty = 1;
-                configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_COMBAT_DIFFICULTY_KEY, &combat_difficulty);
+                combat_difficulty = settings.preferences.combat_difficulty;
                 if (combat_difficulty) {
                     if (combat_difficulty == 2) {
                         v6 = 3;
@@ -2525,13 +2573,17 @@ static int _ai_try_attack(Object* a1, Object* a2)
     int actionPoints = a1->data.critter.combat.ap;
     int v31 = 0;
     int v42 = 0;
-    if (weapon == NULL) {
-        if (critterGetBodyType(a2) != BODY_TYPE_BIPED
-            || ((a2->fid & 0xF000) >> 12 != 0)
-            || !artExists(buildFid(OBJ_TYPE_CRITTER, a1->fid & 0xFFF, ANIM_THROW_PUNCH, 0, a1->rotation + 1))
-            || _combat_safety_invalidate_weapon(a1, weapon, HIT_MODE_RIGHT_WEAPON_PRIMARY, a2, &v31)) {
+    if (weapon != NULL
+        || (critterGetBodyType(a2) == BODY_TYPE_BIPED
+            && ((a2->fid & 0xF000) >> 12 == 0)
+            && artExists(buildFid(OBJ_TYPE_CRITTER, a1->fid & 0xFFF, ANIM_THROW_PUNCH, 0, a1->rotation + 1)))) {
+        // SFALL: Check the safety of weapons based on the selected attack mode
+        // instead of always the primary weapon hit mode.
+        if (_combat_safety_invalidate_weapon(a1, weapon, hitMode, a2, &v31)) {
             _ai_switch_weapons(a1, &hitMode, &weapon, a2);
         }
+    } else {
+        _ai_switch_weapons(a1, &hitMode, &weapon, a2);
     }
 
     unsigned char v30[800];
@@ -2543,10 +2595,10 @@ static int _ai_try_attack(Object* a1, Object* a2)
         }
 
         int reason = _combat_check_bad_shot(a1, a2, hitMode, false);
-        if (reason == 1) {
+        if (reason == COMBAT_BAD_SHOT_NO_AMMO) {
             // out of ammo
-            if (_ai_have_ammo(a1, weapon, &ammo)) {
-                int v9 = _item_w_reload(weapon, ammo);
+            if (aiHaveAmmo(a1, weapon, &ammo)) {
+                int v9 = weaponReload(weapon, ammo);
                 if (v9 == 0 && ammo != NULL) {
                     _obj_destroy(ammo);
                 }
@@ -2557,9 +2609,14 @@ static int _ai_try_attack(Object* a1, Object* a2)
                     _gsound_play_sfx_file_volume(sfx, volume);
                     _ai_magic_hands(a1, weapon, 5002);
 
-                    int actionPoints = a1->data.critter.combat.ap;
-                    if (actionPoints >= 2) {
-                        a1->data.critter.combat.ap = actionPoints - 2;
+                    // SFALL: Fix incorrect AP cost when AI reloads a weapon.
+                    // CE: There is a commented out code which checks
+                    // available action points before performing reload. Not
+                    // sure why it was commented, probably needs additional
+                    // testing.
+                    int actionPointsRequired = weaponGetActionPointCost(a1, HIT_MODE_RIGHT_WEAPON_RELOAD, false);
+                    if (a1->data.critter.combat.ap >= actionPointsRequired) {
+                        a1->data.critter.combat.ap -= actionPointsRequired;
                     } else {
                         a1->data.critter.combat.ap = 0;
                     }
@@ -2569,7 +2626,7 @@ static int _ai_try_attack(Object* a1, Object* a2)
                 if (ammo != NULL) {
                     ammo = _ai_retrieve_object(a1, ammo);
                     if (ammo != NULL) {
-                        int v15 = _item_w_reload(weapon, ammo);
+                        int v15 = weaponReload(weapon, ammo);
                         if (v15 == 0) {
                             _obj_destroy(ammo);
                         }
@@ -2580,9 +2637,14 @@ static int _ai_try_attack(Object* a1, Object* a2)
                             _gsound_play_sfx_file_volume(sfx, volume);
                             _ai_magic_hands(a1, weapon, 5002);
 
-                            int actionPoints = a1->data.critter.combat.ap;
-                            if (actionPoints >= 2) {
-                                a1->data.critter.combat.ap = actionPoints - 2;
+                            // SFALL: Fix incorrect AP cost when AI reloads a
+                            // weapon.
+                            // CE: See note above, probably need to check
+                            // available action points before performing
+                            // reload.
+                            int actionPointsRequired = weaponGetActionPointCost(a1, HIT_MODE_RIGHT_WEAPON_RELOAD, false);
+                            if (a1->data.critter.combat.ap >= actionPointsRequired) {
+                                a1->data.critter.combat.ap -= actionPointsRequired;
                             } else {
                                 a1->data.critter.combat.ap = 0;
                             }
@@ -2601,14 +2663,14 @@ static int _ai_try_attack(Object* a1, Object* a2)
                     _ai_switch_weapons(a1, &hitMode, &weapon, a2);
                 }
             }
-        } else if (reason == 3 || reason == 6 || reason == 7) {
+        } else if (reason == COMBAT_BAD_SHOT_NOT_ENOUGH_AP || reason == COMBAT_BAD_SHOT_ARM_CRIPPLED || reason == COMBAT_BAD_SHOT_BOTH_ARMS_CRIPPLED) {
             // 3 - not enough action points
             // 6 - crippled one arm for two-handed weapon
             // 7 - both hands crippled
             if (_ai_switch_weapons(a1, &hitMode, &weapon, a2) == -1) {
                 return -1;
             }
-        } else if (reason == 2) {
+        } else if (reason == COMBAT_BAD_SHOT_OUT_OF_RANGE) {
             // target out of range
             int accuracy = _determine_to_hit_no_range(a1, a2, HIT_LOCATION_UNCALLED, hitMode, v30);
             if (accuracy < minToHit) {
@@ -2625,19 +2687,20 @@ static int _ai_try_attack(Object* a1, Object* a2)
                 v38 = 0;
             } else {
                 if (_ai_switch_weapons(a1, &hitMode, &weapon, a2) == -1 || weapon == NULL) {
-                    if (_ai_move_steps_closer(a1, a2, a1->data.critter.combat.ap, v38) == -1) {
+                    // NOTE: Uninline.
+                    if (_ai_move_closer(a1, a2, v38) == -1) {
                         return -1;
                     }
                 }
                 v38 = 0;
             }
-        } else if (reason == 5) {
+        } else if (reason == COMBAT_BAD_SHOT_AIM_BLOCKED) {
             // aim is blocked
             if (_ai_move_steps_closer(a1, a2, a1->data.critter.combat.ap, v38) == -1) {
                 return -1;
             }
             v38 = 0;
-        } else if (reason == 0) {
+        } else if (reason == COMBAT_BAD_SHOT_OK) {
             int accuracy = _determine_to_hit(a1, a2, HIT_LOCATION_UNCALLED, hitMode);
             if (v31) {
                 if (_ai_move_away(a1, a2, v31) == -1) {
@@ -2690,11 +2753,11 @@ static int _ai_try_attack(Object* a1, Object* a2)
                 }
 
                 v38 = 0;
-                if (_ai_attack(a1, a2, hitMode) == -1 || _item_w_mp_cost(a1, hitMode, 0) > a1->data.critter.combat.ap) {
+                if (_ai_attack(a1, a2, hitMode) == -1 || weaponGetActionPointCost(a1, hitMode, 0) > a1->data.critter.combat.ap) {
                     return -1;
                 }
             } else {
-                if (_ai_attack(a1, a2, hitMode) == -1 || _item_w_mp_cost(a1, hitMode, 0) > a1->data.critter.combat.ap) {
+                if (_ai_attack(a1, a2, hitMode) == -1 || weaponGetActionPointCost(a1, hitMode, 0) > a1->data.critter.combat.ap) {
                     return -1;
                 }
             }
@@ -2716,33 +2779,31 @@ int _cAIPrepWeaponItem(Object* critter, Object* item)
 }
 
 // 0x42AECC
-void _cai_attempt_w_reload(Object* critter_obj, int a2)
+void aiAttemptWeaponReload(Object* critter, int animate)
 {
-    Object* weapon_obj;
-    Object* ammo_obj;
-    int v5;
-    int v9;
-    const char* sfx;
-    int v10;
-
-    weapon_obj = critterGetItem2(critter_obj);
-    if (weapon_obj == NULL) {
+    Object* weapon = critterGetItem2(critter);
+    if (weapon == NULL) {
         return;
     }
 
-    v5 = ammoGetQuantity(weapon_obj);
-    if (v5 < ammoGetCapacity(weapon_obj) && _ai_have_ammo(critter_obj, weapon_obj, &ammo_obj)) {
-        v9 = _item_w_reload(weapon_obj, ammo_obj);
-        if (v9 == 0) {
-            _obj_destroy(ammo_obj);
-        }
+    int ammoQuantity = ammoGetQuantity(weapon);
+    int ammoCapacity = ammoGetCapacity(weapon);
+    if (ammoQuantity < ammoCapacity) {
+        Object* ammo;
+        if (aiHaveAmmo(critter, weapon, &ammo)) {
+            int rc = weaponReload(weapon, ammo);
+            if (rc == 0) {
+                _obj_destroy(ammo);
+            }
 
-        if (v9 != -1 && objectIsPartyMember(critter_obj)) {
-            v10 = _gsound_compute_relative_volume(critter_obj);
-            sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_READY, weapon_obj, HIT_MODE_RIGHT_WEAPON_PRIMARY, NULL);
-            _gsound_play_sfx_file_volume(sfx, v10);
-            if (a2) {
-                _ai_magic_hands(critter_obj, weapon_obj, 5002);
+            if (rc != -1 && objectIsPartyMember(critter)) {
+                int volume = _gsound_compute_relative_volume(critter);
+                const char* sfx = sfxBuildWeaponName(WEAPON_SOUND_EFFECT_READY, weapon, HIT_MODE_RIGHT_WEAPON_PRIMARY, NULL);
+                _gsound_play_sfx_file_volume(sfx, volume);
+
+                if (animate) {
+                    _ai_magic_hands(critter, weapon, 5002);
+                }
             }
         }
     }
@@ -2799,14 +2860,28 @@ int _cai_perform_distance_prefs(Object* a1, Object* a2)
         break;
     case DISTANCE_CHARGE:
         if (a2 != NULL) {
-            _ai_move_steps_closer(a1, a2, a1->data.critter.combat.ap, 1);
+            // NOTE: Uninline.
+            _ai_move_closer(a1, a2, 1);
         }
         break;
     case DISTANCE_SNIPE:
         if (a2 != NULL) {
-            if (objectGetDistanceBetween(a1, a2) < 10) {
-                // NOTE: some odd code omitted
-                _ai_move_away(a1, a2, 10);
+            // SFALL: Fix AI behavior for "Snipe" distance preference.
+            int distance = objectGetDistanceBetween(a1, a2);
+            if (distance < 10) {
+                int attackCost = weaponGetActionPointCost(a1, HIT_MODE_RIGHT_WEAPON_PRIMARY, false);
+                int movementPoints = a1->data.critter.combat.ap - attackCost;
+                if (movementPoints > 0) {
+                    if (movementPoints + distance - 1 < 5) {
+                        int attackerRating = _combatai_rating(a1);
+                        int defenderRating = _combatai_rating(a2);
+                        if (attackerRating < defenderRating) {
+                            _ai_move_away(a1, a2, 10);
+                        }
+                    }
+                } else {
+                    _ai_move_away(a1, a2, 10);
+                }
             }
         }
         break;
@@ -3012,7 +3087,7 @@ bool _combatai_want_to_stop(Object* a1)
     }
 
     Object* v4 = _ai_danger_source(a1);
-    return v4 == NULL || !objectCanHearObject(a1, v4);
+    return v4 == NULL || !isWithinPerception(a1, v4);
 }
 
 // 0x42B504
@@ -3092,9 +3167,7 @@ int _combatai_msg(Object* a1, Attack* attack, int type, int delay)
         return -1;
     }
 
-    bool combatTaunts = true;
-    configGetBool(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_COMBAT_TAUNTS_KEY, &combatTaunts);
-    if (!combatTaunts) {
+    if (!settings.preferences.combat_taunts) {
         return -1;
     }
 
@@ -3202,7 +3275,7 @@ Object* _combat_ai_random_target(Attack* attack)
     // Looks like this function does nothing because it's result is not used. I
     // suppose it was planned to use range as a condition below, but it was
     // later moved into 0x426614, but remained here.
-    _item_w_range(attack->attacker, attack->hitMode);
+    weaponGetRange(attack->attacker, attack->hitMode);
 
     Object* critter = NULL;
 
@@ -3215,7 +3288,7 @@ Object* _combat_ai_random_target(Attack* attack)
             if (obj != attack->attacker
                 && obj != attack->defender
                 && _can_see(attack->attacker, obj)
-                && _combat_check_bad_shot(attack->attacker, obj, attack->hitMode, false)) {
+                && _combat_check_bad_shot(attack->attacker, obj, attack->hitMode, false) == COMBAT_BAD_SHOT_OK) {
                 critter = obj;
                 break;
             }
@@ -3284,7 +3357,7 @@ int _combatai_check_retaliation(Object* a1, Object* a2)
 }
 
 // 0x42BA04
-bool objectCanHearObject(Object* a1, Object* a2)
+bool isWithinPerception(Object* a1, Object* a2)
 {
     if (a2 == NULL) {
         return false;
@@ -3294,46 +3367,46 @@ bool objectCanHearObject(Object* a1, Object* a2)
     int perception = critterGetStat(a1, STAT_PERCEPTION);
     int sneak = skillGetValue(a2, SKILL_SNEAK);
     if (_can_see(a1, a2)) {
-        int v8 = perception * 5;
+        int maxDistance = perception * 5;
         if ((a2->flags & OBJECT_TRANS_GLASS) != 0) {
-            v8 /= 2;
+            maxDistance /= 2;
         }
 
         if (a2 == gDude) {
             if (dudeIsSneaking()) {
-                v8 /= 4;
+                maxDistance /= 4;
                 if (sneak > 120) {
-                    v8 -= 1;
+                    maxDistance -= 1;
                 }
-            } else if (dudeHasState(0)) {
-                v8 = v8 * 2 / 3;
+            } else if (dudeHasState(DUDE_STATE_SNEAKING)) {
+                maxDistance = maxDistance * 2 / 3;
             }
         }
 
-        if (distance <= v8) {
+        if (distance <= maxDistance) {
             return true;
         }
     }
 
-    int v12;
+    int maxDistance;
     if (isInCombat()) {
-        v12 = perception * 2;
+        maxDistance = perception * 2;
     } else {
-        v12 = perception;
+        maxDistance = perception;
     }
 
     if (a2 == gDude) {
         if (dudeIsSneaking()) {
-            v12 /= 4;
+            maxDistance /= 4;
             if (sneak > 120) {
-                v12 -= 1;
+                maxDistance -= 1;
             }
-        } else if (dudeHasState(0)) {
-            v12 = v12 * 2 / 3;
+        } else if (dudeHasState(DUDE_STATE_SNEAKING)) {
+            maxDistance = maxDistance * 2 / 3;
         }
     }
 
-    if (distance <= v12) {
+    if (distance <= maxDistance) {
         return true;
     }
 
@@ -3356,10 +3429,7 @@ static int aiMessageListInit()
         return -1;
     }
 
-    bool languageFilter;
-    configGetBool(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_LANGUAGE_FILTER_KEY, &languageFilter);
-
-    if (languageFilter) {
+    if (settings.preferences.language_filter) {
         messageListFilterBadwords(&gCombatAiMessageList);
     }
 
@@ -3381,8 +3451,7 @@ static int aiMessageListFree()
 // 0x42BBF0
 void aiMessageListReloadIfNeeded()
 {
-    int languageFilter = 0;
-    configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_LANGUAGE_FILTER_KEY, &languageFilter);
+    int languageFilter = static_cast<int>(settings.preferences.language_filter);
 
     if (languageFilter != gLanguageFilter) {
         gLanguageFilter = languageFilter;
@@ -3404,10 +3473,10 @@ void _combatai_notify_onlookers(Object* a1)
     for (int index = 0; index < _curr_crit_num; index++) {
         Object* obj = _curr_crit_list[index];
         if ((obj->data.critter.combat.maneuver & CRITTER_MANEUVER_0x01) == 0) {
-            if (objectCanHearObject(obj, a1)) {
+            if (isWithinPerception(obj, a1)) {
                 obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_0x01;
                 if ((a1->data.critter.combat.results & DAM_DEAD) != 0) {
-                    if (!objectCanHearObject(obj, obj->data.critter.combat.whoHitMe)) {
+                    if (!isWithinPerception(obj, obj->data.critter.combat.whoHitMe)) {
                         debugPrint("\nSomebody Died and I don't know why!  Run!!!");
                         aiInfoSetFriendlyDead(obj, a1);
                     }
@@ -3425,7 +3494,7 @@ void _combatai_notify_friends(Object* a1)
     for (int index = 0; index < _curr_crit_num; index++) {
         Object* obj = _curr_crit_list[index];
         if ((obj->data.critter.combat.maneuver & CRITTER_MANEUVER_0x01) == 0 && team == obj->data.critter.combat.team) {
-            if (objectCanHearObject(obj, a1)) {
+            if (isWithinPerception(obj, a1)) {
                 obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_0x01;
             }
         }
@@ -3445,3 +3514,5 @@ void _combatai_delete_critter(Object* obj)
         }
     }
 }
+
+} // namespace fallout

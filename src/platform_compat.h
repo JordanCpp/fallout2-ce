@@ -6,6 +6,8 @@
 
 #include <zlib.h>
 
+namespace fallout {
+
 // TODO: This is compatibility cross-platform layer. Designed to have minimal
 // impact on the codebase. Remove once it's no longer needed.
 
@@ -39,5 +41,9 @@ gzFile compat_gzopen(const char* path, const char* mode);
 int compat_remove(const char* path);
 int compat_rename(const char* oldFileName, const char* newFileName);
 void compat_windows_path_to_native(char* path);
+char* compat_strdup(const char* string);
+long getFileSize(FILE* stream);
+
+} // namespace fallout
 
 #endif /* PLATFORM_COMPAT_H */

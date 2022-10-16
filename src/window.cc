@@ -1,22 +1,27 @@
 #include "window.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "color.h"
-#include "core.h"
 #include "datafile.h"
 #include "draw.h"
 #include "game.h"
+#include "input.h"
 #include "interpreter_lib.h"
+#include "kb.h"
 #include "memory_manager.h"
+#include "mouse.h"
 #include "mouse_manager.h"
 #include "movie.h"
 #include "platform_compat.h"
+#include "svga.h"
 #include "text_font.h"
 #include "widget.h"
 #include "window_manager.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+namespace fallout {
 
 #define MANAGED_WINDOW_COUNT (16)
 
@@ -152,10 +157,10 @@ static int _yres;
 // Highlight color (maybe r).
 //
 // 0x672D8C
-int _currentHighlightColorR;
+static int _currentHighlightColorR;
 
 // 0x672D90
-int gWidgetFont;
+static int gWidgetFont;
 
 // 0x672D98
 ButtonCallback* off_672D98;
@@ -166,30 +171,101 @@ ButtonCallback* off_672D9C;
 // Text color (maybe g).
 //
 // 0x672DA0
-int _currentTextColorG;
+static int _currentTextColorG;
 
 // text color (maybe b).
 //
 // 0x672DA4
-int _currentTextColorB;
+static int _currentTextColorB;
 
 // 0x672DA8
-int gWidgetTextFlags;
+static int gWidgetTextFlags;
 
 // Text color (maybe r)
 //
 // 0x672DAC
-int _currentTextColorR;
+static int _currentTextColorR;
 
 // highlight color (maybe g)
 //
 // 0x672DB0
-int _currentHighlightColorG;
+static int _currentHighlightColorG;
 
 // Highlight color (maybe b).
 //
 // 0x672DB4
-int _currentHighlightColorB;
+static int _currentHighlightColorB;
+
+// 0x4B6120
+int windowGetFont()
+{
+    return gWidgetFont;
+}
+
+// 0x4B6128
+int windowSetFont(int a1)
+{
+    gWidgetFont = a1;
+    fontSetCurrent(a1);
+    return 1;
+}
+
+// NOTE: Unused.
+//
+// 0x4B6138
+void windowResetTextAttributes()
+{
+    // NOTE: Uninline.
+    windowSetTextColor(1.0, 1.0, 1.0);
+
+    // NOTE: Uninline.
+    windowSetTextFlags(0x2000000 | 0x10000);
+}
+
+// 0x4B6160
+int windowGetTextFlags()
+{
+    return gWidgetTextFlags;
+}
+
+// 0x4B6168
+int windowSetTextFlags(int a1)
+{
+    gWidgetTextFlags = a1;
+    return 1;
+}
+
+// 0x4B6174
+unsigned char windowGetTextColor()
+{
+    return _colorTable[_currentTextColorB | (_currentTextColorG << 5) | (_currentTextColorR << 10)];
+}
+
+// 0x4B6198
+unsigned char windowGetHighlightColor()
+{
+    return _colorTable[_currentHighlightColorB | (_currentHighlightColorG << 5) | (_currentHighlightColorR << 10)];
+}
+
+// 0x4B61BC
+int windowSetTextColor(float r, float g, float b)
+{
+    _currentTextColorR = (int)(r * 31.0);
+    _currentTextColorG = (int)(g * 31.0);
+    _currentTextColorB = (int)(b * 31.0);
+
+    return 1;
+}
+
+// 0x4B6208
+int windowSetHighlightColor(float r, float g, float b)
+{
+    _currentHighlightColorR = (int)(r * 31.0);
+    _currentHighlightColorG = (int)(g * 31.0);
+    _currentHighlightColorB = (int)(b * 31.0);
+
+    return 1;
+}
 
 // 0x4B62E4
 bool _checkRegion(int windowIndex, int mouseX, int mouseY, int mouseEvent)
@@ -415,7 +491,7 @@ bool _windowActivateRegion(const char* regionName, int a2)
 // 0x4B6ED0
 int _getInput()
 {
-    int keyCode = _get_input();
+    int keyCode = inputGetInput();
     if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
         showQuitConfirmationDialog();
     }
@@ -750,7 +826,7 @@ int _windowOutput(char* string)
     int x = (int)(managedWindow->field_44 * managedWindow->field_54);
     int y = (int)(managedWindow->field_48 * managedWindow->field_58);
     // NOTE: Uses `add` at 0x4B810E, not bitwise `or`.
-    int flags = widgetGetTextColor() + widgetGetTextFlags();
+    int flags = windowGetTextColor() + windowGetTextFlags();
     windowDrawText(managedWindow->window, string, 0, x, y, flags);
 
     return 1;
@@ -1067,7 +1143,7 @@ bool _windowPrintRect(char* string, int a2, int textAlignment)
     int height = windowGetHeight(managedWindow->window);
     int x = managedWindow->field_44;
     int y = managedWindow->field_48;
-    int flags = widgetGetTextColor() | 0x2000000;
+    int flags = windowGetTextColor() | 0x2000000;
     _windowWrapLineWithSpacing(managedWindow->window, string, width, height, x, y, flags, textAlignment, 0);
 
     return true;
@@ -1077,7 +1153,7 @@ bool _windowPrintRect(char* string, int a2, int textAlignment)
 bool _windowFormatMessage(char* string, int x, int y, int width, int height, int textAlignment)
 {
     ManagedWindow* managedWindow = &(gManagedWindows[gCurrentManagedWindowIndex]);
-    int flags = widgetGetTextColor() | 0x2000000;
+    int flags = windowGetTextColor() | 0x2000000;
     _windowWrapLineWithSpacing(managedWindow->window, string, width, height, x, y, flags, textAlignment, 0);
 
     return true;
@@ -1812,7 +1888,7 @@ bool _windowAddButtonTextWithOffsets(const char* buttonName, const char* text, i
                 text,
                 normalImageWidth,
                 normalImageWidth,
-                widgetGetTextColor() + widgetGetTextFlags());
+                windowGetTextColor() + windowGetTextFlags());
 
             blitBufferToBufferTrans(buffer,
                 normalImageWidth,
@@ -1860,7 +1936,7 @@ bool _windowAddButtonTextWithOffsets(const char* buttonName, const char* text, i
                 text,
                 pressedImageWidth,
                 pressedImageWidth,
-                widgetGetTextColor() + widgetGetTextFlags());
+                windowGetTextColor() + windowGetTextFlags());
 
             blitBufferToBufferTrans(buffer,
                 pressedImageWidth,
@@ -2568,3 +2644,5 @@ void _fillBuf3x3(unsigned char* src, int srcWidth, int srcHeight, unsigned char*
         dest + destWidth * (destHeight - chunkHeight) + (destWidth - chunkWidth),
         destWidth);
 }
+
+} // namespace fallout

@@ -1,15 +1,16 @@
 #include "object.h"
 
+#include <assert.h>
+#include <string.h>
+
 #include "animation.h"
 #include "art.h"
 #include "color.h"
 #include "combat.h"
-#include "core.h"
 #include "critter.h"
 #include "debug.h"
 #include "draw.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_mouse.h"
 #include "item.h"
 #include "light.h"
@@ -19,12 +20,13 @@
 #include "proto.h"
 #include "proto_instance.h"
 #include "scripts.h"
+#include "settings.h"
+#include "svga.h"
 #include "text_object.h"
 #include "tile.h"
-#include "world_map.h"
+#include "worldmap.h"
 
-#include <assert.h>
-#include <string.h>
+namespace fallout {
 
 static int objectLoadAllInternal(File* stream);
 static void _obj_fix_combat_cid_for_dude();
@@ -468,14 +470,9 @@ static int objectLoadAllInternal(File* stream)
         return -1;
     }
 
-    bool fixMapInventory;
-    if (!configGetBool(&gGameConfig, GAME_CONFIG_MAPPER_KEY, GAME_CONFIG_FIX_MAP_INVENTORY_KEY, &fixMapInventory)) {
-        fixMapInventory = false;
-    }
+    bool fixMapInventory = settings.mapper.fix_map_inventory;
 
-    if (!configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_VIOLENCE_LEVEL_KEY, &gViolenceLevel)) {
-        gViolenceLevel = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-    }
+    gViolenceLevel = settings.preferences.violence_level;
 
     int objectCount;
     if (fileReadInt32(stream, &objectCount) == -1) {
@@ -1088,7 +1085,7 @@ int _obj_copy(Object** a1, Object* a2)
         return -1;
     }
 
-    objectListNode->obj->flags &= ~OBJECT_USED;
+    objectListNode->obj->flags &= ~OBJECT_QUEUED;
 
     Inventory* newInventory = &(objectListNode->obj->data.inventory);
     newInventory->length = 0;
@@ -1484,7 +1481,7 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
                         transition.rotation = data->misc.rotation;
                         mapSetTransition(&transition);
 
-                        _wmMapMarkMapEntranceState(transition.map, transition.elevation, 1);
+                        wmMapMarkMapEntranceState(transition.map, transition.elevation, 1);
                     }
                 }
             }
@@ -1492,7 +1489,8 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
             objectListNode = objectListNode->next;
         }
 
-        _obj_seen[tile >> 3] |= 1 << (tile & 7);
+        // NOTE: Uninline.
+        obj_set_seen(tile);
 
         int v14 = tile % 200 / 2;
         int v15 = tile / 200 / 2;
@@ -3094,6 +3092,14 @@ void _obj_delete_intersect_list(ObjectWithFlags** entriesPtr)
         internal_free(*entriesPtr);
         *entriesPtr = NULL;
     }
+}
+
+// NOTE: Inlined.
+//
+// 0x48C76C
+void obj_set_seen(int tile)
+{
+    _obj_seen[tile >> 3] |= 1 << (tile & 7);
 }
 
 // 0x48C788
@@ -5153,9 +5159,7 @@ void _obj_fix_violence_settings(int* fid)
 
     bool shouldResetViolenceLevel = false;
     if (gViolenceLevel == -1) {
-        if (!configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_VIOLENCE_LEVEL_KEY, &gViolenceLevel)) {
-            gViolenceLevel = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-        }
+        gViolenceLevel = settings.preferences.violence_level;
         shouldResetViolenceLevel = true;
     }
 
@@ -5235,3 +5239,5 @@ Object* objectTypedFindById(int id, int type)
 
     return NULL;
 }
+
+} // namespace fallout

@@ -42,7 +42,17 @@ $ sudo apt install libsdl2-2.0-0
 
 - Download `fallout2-ce.apk` and copy it to your device. Open it with file explorer, follow instructions (install from unknown source).
 
-- When you run the game for the first time it will immediately present file picker. Select the folder from the first step. Wait until this data is copied. There is no fancy importing interface (yet), just wait for about 30 seconds. The game will start automatically.
+- When you run the game for the first time it will immediately present file picker. Select the folder from the first step. Wait until this data is copied. A loading dialog will appear, just wait for about 30 seconds. The game will start automatically.
+
+### iOS
+
+> **NOTE**: See Android note on controls.
+
+- Download `fallout2-ce.ipa`. Use sideloading applications ([AltStore](https://altstore.io/) or [Sideloadly](https://sideloadly.io/)) to install it to your device. Alternatively you can always build from source with your own signing certificate.
+
+- Run the game once. You'll see error message saying "Couldn't find/load text fonts". This step is needed for iOS to expose the game via File Sharing feature.
+
+- Use Finder (macOS Catalina and later) or iTunes (Windows and macOS Mojave or earlier) to copy `master.dat`, `critter.dat`, `patch000.dat`, and `data` folder to "Fallout 2" app ([how-to](https://support.apple.com/HT210598)).
 
 ## Contributing
 
@@ -52,6 +62,6 @@ Integrating Sfall goodies is the top priority. Quality of life updates are OK to
 
 There are literally hundreds if not thousands of fixes and features in sfall. I guess not all of them are needed in Community Edition, but for the sake of compatibility with big mods out there, let's integrate them all.
 
-## Legal & License
+## License
 
-See [Fallout 2 Reference Edition](https://github.com/alexbatalov/fallout2-re). Same conditions apply until the source code in this repository is changed significantly.
+The source code is this repository is available under the [Sustainable Use License](LICENSE.md).

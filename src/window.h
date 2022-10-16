@@ -6,6 +6,8 @@
 #include "region.h"
 #include "window_manager.h"
 
+namespace fallout {
+
 typedef void (*WINDOWDRAWINGPROC)(unsigned char* src, int src_pitch, int a3, int src_x, int src_y, int src_width, int src_height, int dest_x, int dest_y);
 typedef void WindowDrawingProc2(unsigned char* buf, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9, unsigned char a10);
 typedef bool(WindowInputHandler)(int key);
@@ -34,15 +36,15 @@ typedef enum ManagedButtonRightMouseEvent {
     MANAGED_BUTTON_RIGHT_MOUSE_EVENT_COUNT,
 } ManagedButtonRightMouseEvent;
 
-extern int _currentHighlightColorR;
-extern int gWidgetFont;
-extern int _currentTextColorG;
-extern int _currentTextColorB;
-extern int gWidgetTextFlags;
-extern int _currentTextColorR;
-extern int _currentHighlightColorG;
-extern int _currentHighlightColorB;
-
+int windowGetFont();
+int windowSetFont(int a1);
+void windowResetTextAttributes();
+int windowGetTextFlags();
+int windowSetTextFlags(int a1);
+unsigned char windowGetTextColor();
+unsigned char windowGetHighlightColor();
+int windowSetTextColor(float a1, float a2, float a3);
+int windowSetHighlightColor(float a1, float a2, float a3);
 bool _checkRegion(int windowIndex, int mouseX, int mouseY, int mouseEvent);
 bool _windowCheckRegion(int windowIndex, int mouseX, int mouseY, int mouseEvent);
 bool _windowRefreshRegions();
@@ -124,5 +126,7 @@ void _drawScaled(unsigned char* dest, int destWidth, int destHeight, int destPit
 void _drawScaledBuf(unsigned char* dest, int destWidth, int destHeight, unsigned char* src, int srcWidth, int srcHeight);
 void _alphaBltBuf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* alphaWindowBuffer, unsigned char* alphaBuffer, unsigned char* dest, int destPitch);
 void _fillBuf3x3(unsigned char* src, int srcWidth, int srcHeight, unsigned char* dest, int destWidth, int destHeight);
+
+} // namespace fallout
 
 #endif /* WINDOW_H */

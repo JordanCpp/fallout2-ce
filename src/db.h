@@ -1,10 +1,12 @@
 #ifndef DB_H
 #define DB_H
 
+#include <stddef.h>
+
 #include "memory_defs.h"
 #include "xfile.h"
 
-#include <stddef.h>
+namespace fallout {
 
 typedef XFile File;
 typedef void FileReadProgressHandler();
@@ -65,5 +67,7 @@ void _db_register_mem(MallocProc* mallocProc, StrdupProc* strdupProc, FreeProc* 
 int fileGetSize(File* stream);
 void fileSetReadProgressHandler(FileReadProgressHandler* handler, int size);
 void _db_enable_hash_table_();
+
+} // namespace fallout
 
 #endif /* DB_H */

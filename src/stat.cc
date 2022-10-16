@@ -1,8 +1,11 @@
 #include "stat.h"
 
+#include <stdio.h>
+
+#include <algorithm>
+
 #include "art.h"
 #include "combat.h"
-#include "core.h"
 #include "critter.h"
 #include "display_monitor.h"
 #include "game.h"
@@ -19,12 +22,11 @@
 #include "random.h"
 #include "scripts.h"
 #include "skill.h"
+#include "svga.h"
 #include "tile.h"
 #include "trait.h"
 
-#include <stdio.h>
-
-#include <algorithm>
+namespace fallout {
 
 // Provides metadata about stats.
 typedef struct StatDescription {
@@ -826,3 +828,5 @@ int pcSetExperience(int xp)
 
     return 0;
 }
+
+} // namespace fallout

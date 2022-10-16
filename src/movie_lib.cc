@@ -4,12 +4,14 @@
 
 #include "movie_lib.h"
 
-#include "audio_engine.h"
-#include "platform_compat.h"
-
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "audio_engine.h"
+#include "platform_compat.h"
+
+namespace fallout {
 
 typedef struct STRUCT_6B3690 {
     void* field_0;
@@ -2791,3 +2793,5 @@ static void _nfPkDecomp(unsigned char* a1, unsigned char* a2, int a3, int a4, in
         dest += var_8;
     }
 }
+
+} // namespace fallout

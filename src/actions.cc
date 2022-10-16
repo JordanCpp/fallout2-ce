@@ -1,5 +1,8 @@
 #include "actions.h"
 
+#include <limits.h>
+#include <string.h>
+
 #include "animation.h"
 #include "art.h"
 #include "color.h"
@@ -10,7 +13,6 @@
 #include "debug.h"
 #include "display_monitor.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_sound.h"
 #include "geometry.h"
 #include "interface.h"
@@ -25,6 +27,7 @@
 #include "proto_types.h"
 #include "random.h"
 #include "scripts.h"
+#include "settings.h"
 #include "sfall_config.h"
 #include "skill.h"
 #include "stat.h"
@@ -32,8 +35,7 @@
 #include "tile.h"
 #include "trait.h"
 
-#include <limits.h>
-#include <string.h>
+namespace fallout {
 
 #define MAX_KNOCKDOWN_DISTANCE 20
 
@@ -81,6 +83,7 @@ static int _action_melee(Attack* attack, int a2);
 static int _action_ranged(Attack* attack, int a2);
 static int _is_next_to(Object* a1, Object* a2);
 static int _action_climb_ladder(Object* a1, Object* a2);
+static int _action_use_skill_in_combat_error(Object* critter);
 static int _pick_fall(Object* obj, int anim);
 static int _report_explosion(Attack* attack, Object* a2);
 static int _finished_explosion(Object* a1, Object* a2);
@@ -93,7 +96,7 @@ static int _compute_dmg_damage(int min, int max, Object* obj, int* a4, int damag
 // 0x410468
 int actionKnockdown(Object* obj, int* anim, int maxDistance, int rotation, int delay)
 {
-    if (_critter_flag_check(obj->pid, CRITTER_FLAG_0x4000)) {
+    if (_critter_flag_check(obj->pid, CRITTER_NO_KNOCKBACK)) {
         return -1;
     }
 
@@ -139,10 +142,7 @@ int actionKnockdown(Object* obj, int* anim, int maxDistance, int rotation, int d
 // 0x410568
 int _action_blood(Object* obj, int anim, int delay)
 {
-
-    int violence_level = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-    configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_VIOLENCE_LEVEL_KEY, &violence_level);
-    if (violence_level == VIOLENCE_LEVEL_NONE) {
+    if (settings.preferences.violence_level == VIOLENCE_LEVEL_NONE) {
         return anim;
     }
 
@@ -190,10 +190,9 @@ int _pick_death(Object* attacker, Object* defender, Object* weapon, int damage, 
         maximumBloodViolenceLevelDamageThreshold /= 3;
     }
 
-    int violenceLevel = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-    configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_VIOLENCE_LEVEL_KEY, &violenceLevel);
+    int violenceLevel = settings.preferences.violence_level;
 
-    if (_critter_flag_check(defender->pid, CRITTER_FLAG_0x1000)) {
+    if (_critter_flag_check(defender->pid, CRITTER_SPECIAL_DEATH)) {
         return _check_death(defender, ANIM_EXPLODED_TO_NOTHING, VIOLENCE_LEVEL_NORMAL, isFallingBack);
     }
 
@@ -248,9 +247,7 @@ int _check_death(Object* obj, int anim, int minViolenceLevel, bool isFallingBack
 {
     int fid;
 
-    int violenceLevel = VIOLENCE_LEVEL_MAXIMUM_BLOOD;
-    configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_VIOLENCE_LEVEL_KEY, &violenceLevel);
-    if (violenceLevel >= minViolenceLevel) {
+    if (settings.preferences.violence_level >= minViolenceLevel) {
         fid = buildFid(OBJ_TYPE_CRITTER, obj->fid & 0xFFF, anim, (obj->fid & 0xF000) >> 12, obj->rotation + 1);
         if (artExists(fid)) {
             return anim;
@@ -284,7 +281,7 @@ void _show_damage_to_object(Object* a1, int damage, int flags, Object* weapon, b
     int fid;
     const char* sfx_name;
 
-    if (_critter_flag_check(a1->pid, CRITTER_FLAG_0x4000)) {
+    if (_critter_flag_check(a1->pid, CRITTER_NO_KNOCKBACK)) {
         knockbackDistance = 0;
     }
 
@@ -460,7 +457,7 @@ int _show_death(Object* obj, int anim)
         }
     }
 
-    if (_critter_flag_check(obj->pid, CRITTER_FLAG_0x800) == 0) {
+    if (!_critter_flag_check(obj->pid, CRITTER_FLAT)) {
         obj->flags |= OBJECT_NO_BLOCK;
         if (_obj_toggle_flat(obj, &v7) == 0) {
             rectUnion(&v8, &v7, &v8);
@@ -471,8 +468,8 @@ int _show_death(Object* obj, int anim)
         rectUnion(&v8, &v7, &v8);
     }
 
-    if (anim >= 30 && anim <= 31 && _critter_flag_check(obj->pid, CRITTER_FLAG_0x1000) == 0 && _critter_flag_check(obj->pid, CRITTER_FLAG_0x40) == 0) {
-        _item_drop_all(obj, obj->tile);
+    if (anim >= 30 && anim <= 31 && !_critter_flag_check(obj->pid, CRITTER_SPECIAL_DEATH) && !_critter_flag_check(obj->pid, CRITTER_NO_DROP)) {
+        itemDropAll(obj, obj->tile);
     }
 
     tileWindowRefreshRect(&v8, obj->elevation);
@@ -713,7 +710,7 @@ int _action_ranged(Attack* attack, int anim)
     int actionFrame = (art != NULL) ? artGetActionFrame(art) : 0;
     artUnlock(artHandle);
 
-    _item_w_range(attack->attacker, attack->hitMode);
+    weaponGetRange(attack->attacker, attack->hitMode);
 
     int damageType = weaponGetDamageType(attack->attacker, attack->weapon);
 
@@ -760,7 +757,7 @@ int _action_ranged(Attack* attack, int anim)
                     interfaceGetItemActions(&leftItemAction, &rightItemAction);
 
                     itemRemove(attack->attacker, weapon, 1);
-                    v50 = _item_replace(attack->attacker, weapon, weaponFlags & OBJECT_IN_ANY_HAND);
+                    v50 = itemReplace(attack->attacker, weapon, weaponFlags & OBJECT_IN_ANY_HAND);
                     objectSetFid(projectile, projectileProto->fid, NULL);
                     _cAIPrepWeaponItem(attack->attacker, weapon);
 
@@ -1251,6 +1248,11 @@ int _action_loot_container(Object* critter, Object* container)
         return -1;
     }
 
+    // SFALL: Fix for trying to loot corpses with the "NoSteal" flag.
+    if (_critter_flag_check(container->pid, CRITTER_NO_STEAL)) {
+        return -1;
+    }
+
     if (critter == gDude) {
         int anim = FID_ANIM_TYPE(gDude->fid);
         if (anim == ANIM_WALK || anim == ANIM_RUNNING) {
@@ -1289,23 +1291,33 @@ int _action_skill_use(int skill)
     return -1;
 }
 
+// NOTE: Inlined.
+//
+// 0x412500
+static int _action_use_skill_in_combat_error(Object* critter)
+{
+    MessageListItem messageListItem;
+
+    if (critter == gDude) {
+        messageListItem.num = 902;
+        if (messageListGetItem(&gProtoMessageList, &messageListItem) == 1) {
+            displayMonitorAddMessage(messageListItem.text);
+        }
+    }
+
+    return -1;
+}
+
 // skill_use
 // 0x41255C
 int actionUseSkill(Object* a1, Object* a2, int skill)
 {
-    MessageListItem messageListItem;
-
     switch (skill) {
     case SKILL_FIRST_AID:
     case SKILL_DOCTOR:
         if (isInCombat()) {
-            if (a1 == gDude) {
-                messageListItem.num = 902;
-                if (messageListGetItem(&gProtoMessageList, &messageListItem)) {
-                    displayMonitorAddMessage(messageListItem.text);
-                }
-            }
-            return -1;
+            // NOTE: Uninline.
+            return _action_use_skill_in_combat_error(a1);
         }
 
         if (PID_TYPE(a2->pid) != OBJ_TYPE_CRITTER) {
@@ -1314,13 +1326,8 @@ int actionUseSkill(Object* a1, Object* a2, int skill)
         break;
     case SKILL_LOCKPICK:
         if (isInCombat()) {
-            if (a1 == gDude) {
-                messageListItem.num = 902;
-                if (messageListGetItem(&gProtoMessageList, &messageListItem)) {
-                    displayMonitorAddMessage(messageListItem.text);
-                }
-            }
-            return -1;
+            // NOTE: Uninline.
+            return _action_use_skill_in_combat_error(a1);
         }
 
         if (PID_TYPE(a2->pid) != OBJ_TYPE_ITEM && PID_TYPE(a2->pid) != OBJ_TYPE_SCENERY) {
@@ -1330,13 +1337,8 @@ int actionUseSkill(Object* a1, Object* a2, int skill)
         break;
     case SKILL_STEAL:
         if (isInCombat()) {
-            if (a1 == gDude) {
-                messageListItem.num = 902;
-                if (messageListGetItem(&gProtoMessageList, &messageListItem)) {
-                    displayMonitorAddMessage(messageListItem.text);
-                }
-            }
-            return -1;
+            // NOTE: Uninline.
+            return _action_use_skill_in_combat_error(a1);
         }
 
         if (PID_TYPE(a2->pid) != OBJ_TYPE_ITEM && PID_TYPE(a2->pid) != OBJ_TYPE_CRITTER) {
@@ -1350,13 +1352,8 @@ int actionUseSkill(Object* a1, Object* a2, int skill)
         break;
     case SKILL_TRAPS:
         if (isInCombat()) {
-            if (a1 == gDude) {
-                messageListItem.num = 902;
-                if (messageListGetItem(&gProtoMessageList, &messageListItem)) {
-                    displayMonitorAddMessage(messageListItem.text);
-                }
-            }
-            return -1;
+            // NOTE: Uninline.
+            return _action_use_skill_in_combat_error(a1);
         }
 
         if (PID_TYPE(a2->pid) == OBJ_TYPE_CRITTER) {
@@ -1367,13 +1364,8 @@ int actionUseSkill(Object* a1, Object* a2, int skill)
     case SKILL_SCIENCE:
     case SKILL_REPAIR:
         if (isInCombat()) {
-            if (a1 == gDude) {
-                messageListItem.num = 902;
-                if (messageListGetItem(&gProtoMessageList, &messageListItem)) {
-                    displayMonitorAddMessage(messageListItem.text);
-                }
-            }
-            return -1;
+            // NOTE: Uninline.
+            return _action_use_skill_in_combat_error(a1);
         }
 
         if (PID_TYPE(a2->pid) != OBJ_TYPE_CRITTER) {
@@ -1967,7 +1959,7 @@ int _report_dmg(Attack* attack, Object* a2)
 // 0x413660
 int _compute_dmg_damage(int min, int max, Object* obj, int* a4, int damageType)
 {
-    if (!_critter_flag_check(obj->pid, CRITTER_FLAG_0x4000)) {
+    if (!_critter_flag_check(obj->pid, CRITTER_NO_KNOCKBACK)) {
         a4 = NULL;
     }
 
@@ -2123,3 +2115,5 @@ int _action_can_talk_to(Object* a1, Object* a2)
 
     return 0;
 }
+
+} // namespace fallout

@@ -1,10 +1,12 @@
 #include "region.h"
 
+#include <limits.h>
+#include <string.h>
+
 #include "debug.h"
 #include "memory_manager.h"
 
-#include <limits.h>
-#include <string.h>
+namespace fallout {
 
 // 0x50D394
 static char _aNull[] = "<null>";
@@ -266,3 +268,5 @@ void regionAddFlag(Region* region, int value)
 {
     region->field_74 |= value;
 }
+
+} // namespace fallout

@@ -1,10 +1,12 @@
 #include "game_config.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "main.h"
 #include "platform_compat.h"
 
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 // A flag indicating if [gGameConfig] was initialized.
 //
@@ -181,3 +183,5 @@ bool gameConfigExit(bool shouldSave)
 
     return result;
 }
+
+} // namespace fallout

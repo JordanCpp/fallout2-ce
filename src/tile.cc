@@ -1,21 +1,23 @@
 #include "tile.h"
 
+#include <assert.h>
+#include <math.h>
+#include <string.h>
+
 #include "art.h"
 #include "color.h"
 #include "config.h"
-#include "core.h"
 #include "debug.h"
 #include "draw.h"
-#include "game_config.h"
 #include "game_mouse.h"
 #include "light.h"
 #include "map.h"
 #include "object.h"
 #include "platform_compat.h"
+#include "settings.h"
+#include "svga.h"
 
-#include <assert.h>
-#include <math.h>
-#include <string.h>
+namespace fallout {
 
 typedef struct STRUCT_51D99C {
     int field_0;
@@ -442,9 +444,7 @@ int tileInit(TileData** a1, int squareGridWidth, int squareGridHeight, int hexGr
 
     tileSetCenter(hexGridWidth * (hexGridHeight / 2) + hexGridWidth / 2, 2);
 
-    char* executable;
-    configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_EXECUTABLE_KEY, &executable);
-    if (compat_stricmp(executable, "mapper") == 0) {
+    if (compat_stricmp(settings.system.executable.c_str(), "mapper") == 0) {
         gTileWindowRefreshElevationProc = tileRefreshMapper;
     }
 
@@ -1972,3 +1972,5 @@ int _tile_scroll_to(int tile, int flags)
 
     return rc;
 }
+
+} // namespace fallout

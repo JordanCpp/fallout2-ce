@@ -1,5 +1,9 @@
 #include "skill.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "actions.h"
 #include "color.h"
 #include "combat.h"
@@ -7,7 +11,6 @@
 #include "debug.h"
 #include "display_monitor.h"
 #include "game.h"
-#include "game_config.h"
 #include "interface.h"
 #include "item.h"
 #include "message.h"
@@ -20,12 +23,11 @@
 #include "proto.h"
 #include "random.h"
 #include "scripts.h"
+#include "settings.h"
 #include "stat.h"
 #include "trait.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+namespace fallout {
 
 #define SKILLS_MAX_USES_PER_DAY (3)
 
@@ -48,6 +50,7 @@ typedef struct SkillDescription {
 
 static void _show_skill_use_messages(Object* obj, int skill, Object* a3, int a4, int a5);
 static int skillGetFreeUsageSlot(int skill);
+static int skill_use_slot_clear();
 
 // Damage flags which can be repaired using "Repair" skill.
 //
@@ -152,7 +155,8 @@ int skillsInit()
         gTaggedSkills[index] = -1;
     }
 
-    memset(_timesSkillUsed, 0, sizeof(_timesSkillUsed));
+    // NOTE: Uninline.
+    skill_use_slot_clear();
 
     return 0;
 }
@@ -164,7 +168,8 @@ void skillsReset()
         gTaggedSkills[index] = -1;
     }
 
-    memset(_timesSkillUsed, 0, sizeof(_timesSkillUsed));
+    // NOTE: Uninline.
+    skill_use_slot_clear();
 }
 
 // 0x4AA478
@@ -707,7 +712,7 @@ int skillUse(Object* obj, Object* a2, int skill, int criticalChanceModifier)
                         // 533: crippled right leg
                         // 534: crippled left leg
                         messageListItem.num = 530 + index;
-                        if (messageListGetItem(&gSkillsMessageList, &messageListItem)) {
+                        if (!messageListGetItem(&gSkillsMessageList, &messageListItem)) {
                             return -1;
                         }
 
@@ -1120,8 +1125,7 @@ int skillGetGameDifficultyModifier(int skill)
     case SKILL_GAMBLING:
     case SKILL_OUTDOORSMAN:
         if (1) {
-            int gameDifficulty = GAME_DIFFICULTY_NORMAL;
-            configGetInt(&gGameConfig, GAME_CONFIG_PREFERENCES_KEY, GAME_CONFIG_GAME_DIFFICULTY_KEY, &gameDifficulty);
+            int gameDifficulty = settings.preferences.game_difficulty;
 
             if (gameDifficulty == GAME_DIFFICULTY_HARD) {
                 return -10;
@@ -1172,6 +1176,15 @@ int skillUpdateLastUse(int skill)
     return 0;
 }
 
+// NOTE: Inlined.
+//
+// 0x4ABF24
+int skill_use_slot_clear()
+{
+    memset(_timesSkillUsed, 0, sizeof(_timesSkillUsed));
+    return 0;
+}
+
 // 0x4ABF3C
 int skillsUsageSave(File* stream)
 {
@@ -1204,3 +1217,5 @@ char* skillsGetGenericResponse(Object* critter, bool isDude)
     char* msg = getmsg(&gSkillsMessageList, &messageListItem, baseMessageId + messageId);
     return msg;
 }
+
+} // namespace fallout

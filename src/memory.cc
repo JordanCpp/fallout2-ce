@@ -1,10 +1,12 @@
 #include "memory.h"
 
-#include "debug.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "debug.h"
+
+namespace fallout {
 
 // A special value that denotes a beginning of a memory block data.
 #define MEMORY_BLOCK_HEADER_GUARD (0xFEEDFACE)
@@ -31,6 +33,7 @@ static void* memoryBlockMallocImpl(size_t size);
 static void* memoryBlockReallocImpl(void* ptr, size_t size);
 static void memoryBlockFreeImpl(void* ptr);
 static void memoryBlockPrintStats();
+static void* mem_prep_block(void* block, size_t size);
 static void memoryBlockValidate(void* block);
 
 // 0x51DED0
@@ -81,12 +84,8 @@ static void* memoryBlockMallocImpl(size_t size)
 
         unsigned char* block = (unsigned char*)malloc(size);
         if (block != NULL) {
-            MemoryBlockHeader* header = (MemoryBlockHeader*)block;
-            header->size = size;
-            header->guard = MEMORY_BLOCK_HEADER_GUARD;
-
-            MemoryBlockFooter* footer = (MemoryBlockFooter*)(block + size - sizeof(MemoryBlockFooter));
-            footer->guard = MEMORY_BLOCK_FOOTER_GUARD;
+            // NOTE: Uninline.
+            ptr = mem_prep_block(block, size);
 
             gMemoryBlocksCurrentCount++;
             if (gMemoryBlocksCurrentCount > gMemoryBlockMaximumCount) {
@@ -97,8 +96,6 @@ static void* memoryBlockMallocImpl(size_t size)
             if (gMemoryBlocksCurrentSize > gMemoryBlocksMaximumSize) {
                 gMemoryBlocksMaximumSize = gMemoryBlocksCurrentSize;
             }
-
-            ptr = block + sizeof(MemoryBlockHeader);
         }
     }
 
@@ -130,19 +127,13 @@ static void* memoryBlockReallocImpl(void* ptr, size_t size)
 
         unsigned char* newBlock = (unsigned char*)realloc(block, size);
         if (newBlock != NULL) {
-            MemoryBlockHeader* newHeader = (MemoryBlockHeader*)newBlock;
-            newHeader->size = size;
-            newHeader->guard = MEMORY_BLOCK_HEADER_GUARD;
-
-            MemoryBlockFooter* newFooter = (MemoryBlockFooter*)(newBlock + size - sizeof(MemoryBlockFooter));
-            newFooter->guard = MEMORY_BLOCK_FOOTER_GUARD;
-
             gMemoryBlocksCurrentSize += size;
             if (gMemoryBlocksCurrentSize > gMemoryBlocksMaximumSize) {
                 gMemoryBlocksMaximumSize = gMemoryBlocksCurrentSize;
             }
 
-            ptr = newBlock + sizeof(MemoryBlockHeader);
+            // NOTE: Uninline.
+            ptr = mem_prep_block(newBlock, size);
         } else {
             if (size != 0) {
                 gMemoryBlocksCurrentSize += oldSize;
@@ -194,6 +185,24 @@ static void memoryBlockPrintStats()
     }
 }
 
+// NOTE: Inlined.
+//
+// 0x4C5CC4
+static void* mem_prep_block(void* block, size_t size)
+{
+    MemoryBlockHeader* header;
+    MemoryBlockFooter* footer;
+
+    header = (MemoryBlockHeader*)block;
+    header->guard = MEMORY_BLOCK_HEADER_GUARD;
+    header->size = size;
+
+    footer = (MemoryBlockFooter*)((unsigned char*)block + size - sizeof(*footer));
+    footer->guard = MEMORY_BLOCK_FOOTER_GUARD;
+
+    return (unsigned char*)block + sizeof(*header);
+}
+
 // Validates integrity of the memory block.
 //
 // [block] is a pointer to the the memory block itself, not it's data.
@@ -211,3 +220,5 @@ static void memoryBlockValidate(void* block)
         debugPrint("Memory footer stomped.\n");
     }
 }
+
+} // namespace fallout

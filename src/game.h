@@ -4,6 +4,17 @@
 #include "game_vars.h"
 #include "message.h"
 
+namespace fallout {
+
+typedef enum GameState {
+    GAME_STATE_0,
+    GAME_STATE_1,
+    GAME_STATE_2,
+    GAME_STATE_3,
+    GAME_STATE_4,
+    GAME_STATE_5,
+} GameState;
+
 extern int* gGameGlobalVars;
 extern int gGameGlobalVarsLength;
 extern const char* asc_5186C8;
@@ -23,9 +34,13 @@ bool gameUiIsDisabled();
 int gameGetGlobalVar(int var);
 int gameSetGlobalVar(int var, int value);
 int globalVarsRead(const char* path, const char* section, int* variablesListLengthPtr, int** variablesListPtr);
-int _game_state();
-int _game_state_request(int a1);
-void _game_state_update();
+int gameGetState();
+int gameRequestState(int newGameState);
+void gameUpdateState();
 int showQuitConfirmationDialog();
+
+int gameShowDeathDialog(const char* message);
+
+} // namespace fallout
 
 #endif /* GAME_H */

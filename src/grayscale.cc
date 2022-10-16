@@ -1,8 +1,10 @@
 #include "grayscale.h"
 
+#include <algorithm>
+
 #include "color.h"
 
-#include <algorithm>
+namespace fallout {
 
 // 0x596D90
 static unsigned char _GreyTable[256];
@@ -40,3 +42,5 @@ void grayscalePaletteApply(unsigned char* buffer, int width, int height, int pit
         ptr += skip;
     }
 }
+
+} // namespace fallout

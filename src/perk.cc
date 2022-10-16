@@ -1,8 +1,9 @@
 #include "perk.h"
 
+#include <stdio.h>
+
 #include "debug.h"
 #include "game.h"
-#include "game_config.h"
 #include "memory.h"
 #include "message.h"
 #include "object.h"
@@ -11,7 +12,7 @@
 #include "skill.h"
 #include "stat.h"
 
-#include <stdio.h>
+namespace fallout {
 
 typedef struct PerkDescription {
     char* name;
@@ -713,3 +714,5 @@ int perkGetSkillModifier(Object* critter, int skill)
 
     return modifier;
 }
+
+} // namespace fallout

@@ -4,6 +4,8 @@
 #include "db.h"
 #include "obj_types.h"
 
+namespace fallout {
+
 typedef enum Hand {
     // Item1 (Punch)
     HAND_LEFT,
@@ -37,6 +39,7 @@ void interfaceReset();
 void interfaceFree();
 int interfaceLoad(File* stream);
 int interfaceSave(File* stream);
+void intface_hide();
 void _intface_show();
 void interfaceBarEnable();
 void interfaceBarDisable();
@@ -61,5 +64,7 @@ void interfaceBarEndButtonsRenderRedLights();
 int indicatorBarRefresh();
 bool indicatorBarShow();
 bool indicatorBarHide();
+
+} // namespace fallout
 
 #endif /* INTERFACE_H */

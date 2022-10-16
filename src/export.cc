@@ -1,11 +1,13 @@
 #include "export.h"
 
+#include <ctype.h>
+#include <string.h>
+
 #include "interpreter_lib.h"
 #include "memory_manager.h"
 #include "platform_compat.h"
 
-#include <ctype.h>
-#include <string.h>
+namespace fallout {
 
 typedef struct ExternalVariable {
     char name[32];
@@ -343,3 +345,5 @@ void _exportClearAllVariables()
         }
     }
 }
+
+} // namespace fallout

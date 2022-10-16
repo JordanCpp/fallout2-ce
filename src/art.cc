@@ -1,18 +1,20 @@
 #include "art.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "animation.h"
 #include "debug.h"
 #include "draw.h"
 #include "game.h"
-#include "game_config.h"
 #include "memory.h"
 #include "object.h"
 #include "proto.h"
+#include "settings.h"
 #include "sfall_config.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+namespace fallout {
 
 typedef struct ArtListDescription {
     int flags;
@@ -130,18 +132,14 @@ int artInit()
     File* stream;
     char string[200];
 
-    int cacheSize;
-    if (!configGetInt(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_ART_CACHE_SIZE_KEY, &cacheSize)) {
-        cacheSize = 8;
-    }
-
+    int cacheSize = settings.system.art_cache_size;
     if (!cacheInit(&gArtCache, artCacheGetFileSizeImpl, artCacheReadDataImpl, artCacheFreeImpl, cacheSize << 20)) {
         debugPrint("cache_init failed in art_init\n");
         return -1;
     }
 
-    char* language;
-    if (configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_LANGUAGE_KEY, &language) && compat_stricmp(language, ENGLISH) != 0) {
+    const char* language = settings.system.language.c_str();
+    if (compat_stricmp(language, ENGLISH) != 0) {
         strcpy(gArtLanguage, language);
         gArtLanguageInitialized = true;
     }
@@ -1228,3 +1226,43 @@ int artWrite(const char* path, unsigned char* data)
     fileClose(stream);
     return 0;
 }
+
+FrmImage::FrmImage()
+{
+    _key = nullptr;
+    _data = nullptr;
+    _width = 0;
+    _height = 0;
+}
+
+FrmImage::~FrmImage()
+{
+    unlock();
+}
+
+bool FrmImage::lock(unsigned int fid)
+{
+    if (isLocked()) {
+        return false;
+    }
+
+    _data = artLockFrameDataReturningSize(fid, &_key, &_width, &_height);
+    if (!_data) {
+        return false;
+    }
+
+    return true;
+}
+
+void FrmImage::unlock()
+{
+    if (isLocked()) {
+        artUnlock(_key);
+        _key = nullptr;
+        _data = nullptr;
+        _width = 0;
+        _height = 0;
+    }
+}
+
+} // namespace fallout

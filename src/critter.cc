@@ -1,5 +1,8 @@
 #include "critter.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "animation.h"
 #include "art.h"
 #include "character_editor.h"
@@ -26,10 +29,9 @@
 #include "stat.h"
 #include "tile.h"
 #include "trait.h"
-#include "world_map.h"
+#include "worldmap.h"
 
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 // Maximum length of dude's name length.
 #define DUDE_NAME_MAX_LENGTH (32)
@@ -68,6 +70,7 @@ typedef enum RadiationLevel {
 } RadiationLevel;
 
 static int _get_rad_damage_level(Object* obj, void* data);
+static int critter_kill_count_clear();
 static int _critterClearObjDrugs(Object* obj, void* data);
 
 // 0x50141C
@@ -159,7 +162,8 @@ int critterInit()
 {
     dudeResetName();
 
-    memset(gKillsByType, 0, sizeof(gKillsByType));
+    // NOTE: Uninline;
+    critter_kill_count_clear();
 
     if (!messageListInit(&gCritterMessageList)) {
         debugPrint("\nError: Initing critter name message file!");
@@ -181,7 +185,9 @@ int critterInit()
 void critterReset()
 {
     dudeResetName();
-    memset(gKillsByType, 0, sizeof(gKillsByType));
+
+    // NOTE: Uninline;
+    critter_kill_count_clear();
 }
 
 // 0x42D004
@@ -416,7 +422,7 @@ int critterAdjustRadiation(Object* obj, int amount)
     }
 
     if (amount > 0) {
-        proto->critter.data.flags |= CRITTER_FLAG_0x2;
+        proto->critter.data.flags |= CRITTER_RADIATED;
     }
 
     if (amount > 0) {
@@ -483,7 +489,7 @@ int _critter_check_rads(Object* obj)
 
     Proto* proto;
     protoGetProto(obj->pid, &proto);
-    if ((proto->critter.data.flags & CRITTER_FLAG_0x2) == 0) {
+    if ((proto->critter.data.flags & CRITTER_RADIATED) == 0) {
         return 0;
     }
 
@@ -524,7 +530,7 @@ int _critter_check_rads(Object* obj)
         queueAddEvent(GAME_TIME_TICKS_PER_HOUR * randomBetween(4, 18), obj, radiationEvent, EVENT_TYPE_RADIATION);
     }
 
-    proto->critter.data.flags &= ~(CRITTER_FLAG_0x2);
+    proto->critter.data.flags &= ~CRITTER_RADIATED;
 
     return 0;
 }
@@ -607,7 +613,8 @@ void _process_rads(Object* obj, int radiationLevel, bool isHealing)
             // You have died from radiation sickness.
             messageListItem.num = 1006;
             if (messageListGetItem(&gMiscMessageList, &messageListItem)) {
-                displayMonitorAddMessage(messageListItem.text);
+                // SFALL: Display a pop-up message box about death from radiation.
+                gameShowDeathDialog(messageListItem.text);
             }
         }
     }
@@ -677,6 +684,15 @@ int critterGetDamageType(Object* obj)
     }
 
     return proto->critter.data.damageType;
+}
+
+// NOTE: Inlined.
+//
+// 0x42D860
+static int critter_kill_count_clear()
+{
+    memset(gKillsByType, 0, sizeof(gKillsByType));
+    return 0;
 }
 
 // 0x42D878
@@ -860,7 +876,7 @@ void critterKill(Object* critter, int anim, bool a3)
         rectUnion(&updatedRect, &tempRect, &updatedRect);
     }
 
-    if (!_critter_flag_check(critter->pid, CRITTER_FLAG_0x800)) {
+    if (!_critter_flag_check(critter->pid, CRITTER_FLAT)) {
         critter->flags |= OBJECT_NO_BLOCK;
         _obj_toggle_flat(critter, &tempRect);
     }
@@ -883,7 +899,7 @@ void critterKill(Object* critter, int anim, bool a3)
     _critterClearObj = critter;
     _queue_clear_type(EVENT_TYPE_DRUG, _critterClearObjDrugs);
 
-    _item_destroy_all_hidden(critter);
+    itemDestroyAllHidden(critter);
 
     if (a3) {
         tileWindowRefreshRect(&updatedRect, elevation);
@@ -1289,7 +1305,7 @@ int _critter_set_who_hit_me(Object* a1, Object* a2)
 bool _critter_can_obj_dude_rest()
 {
     bool v1 = false;
-    if (!_wmMapCanRestHere(gElevation)) {
+    if (!wmMapCanRestHere(gElevation)) {
         v1 = true;
     }
 
@@ -1376,3 +1392,5 @@ bool _critter_flag_check(int pid, int flag)
     protoGetProto(pid, &proto);
     return (proto->critter.data.flags & flag) != 0;
 }
+
+} // namespace fallout

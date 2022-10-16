@@ -1,13 +1,17 @@
 #include "mouse_manager.h"
 
-#include "core.h"
+#include <string.h>
+
 #include "datafile.h"
 #include "db.h"
 #include "debug.h"
+#include "input.h"
 #include "memory_manager.h"
+#include "mouse.h"
 #include "platform_compat.h"
+#include "svga.h"
 
-#include <string.h>
+namespace fallout {
 
 // 0x5195A8
 MouseManagerNameMangler* gMouseManagerNameMangler = mouseManagerNameManglerDefaultImpl;
@@ -54,7 +58,7 @@ int mouseManagerRateProviderDefaultImpl()
 // 0x48525C
 int mouseManagerTimeProviderDefaultImpl()
 {
-    return _get_time();
+    return getTicks();
 }
 
 // 0x485288
@@ -639,3 +643,5 @@ void mouseManagerShowMouse()
 {
     mouseShowCursor();
 }
+
+} // namespace fallout

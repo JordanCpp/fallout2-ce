@@ -1,25 +1,27 @@
 #include "movie.h"
 
+#include <string.h>
+
+#include <SDL.h>
+
 #include "color.h"
-#include "core.h"
 #include "db.h"
 #include "debug.h"
 #include "draw.h"
-#include "game_config.h"
 #include "geometry.h"
+#include "input.h"
 #include "memory_manager.h"
 #include "movie_effect.h"
 #include "movie_lib.h"
 #include "platform_compat.h"
 #include "pointer_registry.h"
 #include "sound.h"
+#include "svga.h"
 #include "text_font.h"
 #include "window.h"
 #include "window_manager.h"
 
-#include <string.h>
-
-#include <SDL.h>
+namespace fallout {
 
 typedef struct MovieSubtitleListNode {
     int num;
@@ -325,10 +327,7 @@ static void movieDirectImpl(SDL_Surface* surface, int srcWidth, int srcHeight, i
     SDL_SetSurfacePalette(surface, gSdlSurface->format->palette);
     SDL_BlitSurface(surface, &srcRect, gSdlSurface, &destRect);
     SDL_BlitSurface(gSdlSurface, NULL, gSdlTextureSurface, NULL);
-    SDL_UpdateTexture(gSdlTexture, NULL, gSdlTextureSurface->pixels, gSdlTextureSurface->pitch);
-    SDL_RenderClear(gSdlRenderer);
-    SDL_RenderCopy(gSdlRenderer, gSdlTexture, NULL, NULL);
-    SDL_RenderPresent(gSdlRenderer);
+    renderPresent();
 }
 
 // 0x486900
@@ -908,7 +907,7 @@ static bool _localMovieCallback()
         _movieCallback();
     }
 
-    return _get_input() != -1;
+    return inputGetInput() != -1;
 }
 
 // 0x487AC8
@@ -1011,3 +1010,5 @@ int _moviePlaying()
 {
     return _running;
 }
+
+} // namespace fallout

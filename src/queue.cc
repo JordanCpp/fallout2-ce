@@ -15,6 +15,8 @@
 #include "proto_instance.h"
 #include "scripts.h"
 
+namespace fallout {
+
 typedef struct QueueListNode {
     // TODO: Make unsigned.
     int time;
@@ -256,7 +258,7 @@ int queueAddEvent(int delay, Object* obj, void* data, int eventType)
     newQueueListNode->data = data;
 
     if (obj != NULL) {
-        obj->flags |= OBJECT_USED;
+        obj->flags |= OBJECT_QUEUED;
     }
 
     QueueListNode** v3 = &gQueueListHead;
@@ -570,3 +572,5 @@ void* queueFindNextEvent(Object* owner, int eventType)
 
     return NULL;
 }
+
+} // namespace fallout

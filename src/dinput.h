@@ -3,6 +3,8 @@
 
 #include <SDL.h>
 
+namespace fallout {
+
 typedef struct MouseData {
     int x;
     int y;
@@ -30,7 +32,9 @@ void mouseDeviceFree();
 bool keyboardDeviceInit();
 void keyboardDeviceFree();
 
-void handleTouchFingerEvent(SDL_TouchFingerEvent* event);
-void handleMouseWheelEvent(SDL_MouseWheelEvent* event);
+void handleMouseEvent(SDL_Event* event);
+void handleTouchEvent(SDL_Event* event);
+
+} // namespace fallout
 
 #endif /* DINPUT_H */

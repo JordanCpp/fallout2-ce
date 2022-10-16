@@ -1,6 +1,8 @@
 #ifndef PROTO_TYPES_H
 #define PROTO_TYPES_H
 
+namespace fallout {
+
 // Number of prototypes in prototype extent.
 #define PROTO_LIST_EXTENT_SIZE 16
 
@@ -221,7 +223,7 @@ typedef enum ItemProtoExtendedFlags {
     // This flag is used on weapons to indicate that's an natural (integral)
     // part of it's owner, for example Claw, or Robot's Rocket Launcher. Items
     // with this flag on do count toward total weight and cannot be dropped.
-    ItemProtoExtendedFlags_NaturalWeapon = 0x08000000,
+    ITEM_HIDDEN = 0x08000000,
 } ItemProtoExtendedFlags;
 
 typedef struct {
@@ -473,5 +475,7 @@ typedef struct ProtoList {
     // Number of lines in proto/{type}/{type}.lst.
     int max_entries_num;
 } ProtoList;
+
+} // namespace fallout
 
 #endif /* PROTO_TYPES_H */

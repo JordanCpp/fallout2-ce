@@ -1,5 +1,8 @@
 #include "proto.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #include "art.h"
 #include "character_editor.h"
 #include "combat.h"
@@ -8,19 +11,18 @@
 #include "debug.h"
 #include "dialog.h"
 #include "game.h"
-#include "game_config.h"
 #include "game_movie.h"
 #include "interface.h"
 #include "map.h"
 #include "memory.h"
 #include "object.h"
 #include "perk.h"
+#include "settings.h"
 #include "skill.h"
 #include "stat.h"
 #include "trait.h"
 
-#include <stdio.h>
-#include <string.h>
+namespace fallout {
 
 static int _proto_critter_init(Proto* a1, int a2);
 static int objectCritterCombatDataRead(CritterCombatData* data, File* stream);
@@ -437,12 +439,13 @@ static int objectCritterCombatDataWrite(CritterCombatData* data, File* stream)
 int objectDataRead(Object* obj, File* stream)
 {
     Proto* proto;
+    int temp;
 
     Inventory* inventory = &(obj->data.inventory);
     if (fileReadInt32(stream, &(inventory->length)) == -1) return -1;
     if (fileReadInt32(stream, &(inventory->capacity)) == -1) return -1;
-    // TODO: See below.
-    if (fileReadInt32(stream, (int*)&(inventory->items)) == -1) return -1;
+    // CE: Original code reads inventory items pointer which is meaningless.
+    if (fileReadInt32(stream, &temp) == -1) return -1;
 
     if (PID_TYPE(obj->pid) == OBJ_TYPE_CRITTER) {
         if (fileReadInt32(stream, &(obj->data.critter.field_0)) == -1) return -1;
@@ -537,9 +540,8 @@ int objectDataWrite(Object* obj, File* stream)
     ObjectData* data = &(obj->data);
     if (fileWriteInt32(stream, data->inventory.length) == -1) return -1;
     if (fileWriteInt32(stream, data->inventory.capacity) == -1) return -1;
-    // TODO: Why do we need to write address of pointer? That probably means
-    // this field is shared with something else.
-    if (fileWriteInt32(stream, (intptr_t)data->inventory.items) == -1) return -1;
+    // CE: Original code writes inventory items pointer, which is meaningless.
+    if (fileWriteInt32(stream, 0) == -1) return -1;
 
     if (PID_TYPE(obj->pid) == OBJ_TYPE_CRITTER) {
         if (fileWriteInt32(stream, data->flags) == -1) return -1;
@@ -1058,17 +1060,12 @@ int protoGetDataMember(int pid, int member, ProtoDataMemberValue* value)
 // 0x4A0390
 int protoInit()
 {
-    char* master_patches;
-    int len;
+    size_t len;
     MessageListItem messageListItem;
     char path[COMPAT_MAX_PATH];
     int i;
 
-    if (!configGetString(&gGameConfig, GAME_CONFIG_SYSTEM_KEY, GAME_CONFIG_MASTER_PATCHES_KEY, &master_patches)) {
-        return -1;
-    }
-
-    sprintf(path, "%s\\proto", master_patches);
+    sprintf(path, "%s\\proto", settings.system.master_patches_path.c_str());
     len = strlen(path);
 
     compat_mkdir(path);
@@ -1876,3 +1873,5 @@ int _ResetPlayer()
     critterUpdateDerivedStats(gDude);
     return 0;
 }
+
+} // namespace fallout
