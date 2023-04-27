@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "art.h"
@@ -18,9 +19,9 @@
 #include "draw.h"
 #include "game.h"
 #include "game_mouse.h"
-#include "game_palette.h"
 #include "game_sound.h"
 #include "geometry.h"
+#include "graph_lib.h"
 #include "input.h"
 #include "interface.h"
 #include "item.h"
@@ -790,6 +791,8 @@ static std::vector<TownReputationEntry> gCustomTownReputationEntries;
 // 0x431DF8
 int characterEditorShow(bool isCreationMode)
 {
+    ScopedGameMode gm(!isCreationMode ? GameMode::kEditor : 0);
+
     char* messageListItemText;
     char line1[128];
     char line2[128];
@@ -1186,8 +1189,8 @@ int characterEditorShow(bool isCreationMode)
         characterEditorRestorePlayer();
     }
 
-    if (dudeHasState(0x03)) {
-        dudeDisableState(0x03);
+    if (dudeHasState(DUDE_STATE_LEVEL_UP_AVAILABLE)) {
+        dudeDisableState(DUDE_STATE_LEVEL_UP_AVAILABLE);
     }
 
     interfaceRenderHitPoints(false);
@@ -1270,7 +1273,7 @@ static int characterEditorWindowInit()
         return -1;
     }
 
-    sprintf(path, "%s%s", asc_5186C8, "editor.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "editor.msg");
 
     if (!messageListLoad(&gCharacterEditorMessageList, path)) {
         return -1;
@@ -1369,7 +1372,7 @@ static int characterEditorWindowInit()
         EDITOR_WINDOW_WIDTH,
         EDITOR_WINDOW_HEIGHT,
         256,
-        WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+        WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
     if (gCharacterEditorWindow == -1) {
         for (i = 0; i < EDITOR_GRAPHIC_COUNT; i++) {
             if (gCharacterEditorFrmShouldCopy[i]) {
@@ -1929,6 +1932,8 @@ static int _get_input_str(int win, int cancelKeyCode, char* text, int maxLength,
 
     windowRefresh(win);
 
+    beginTextInput();
+
     int blinkingCounter = 3;
     bool blink = false;
 
@@ -1991,6 +1996,8 @@ static int _get_input_str(int win, int cancelKeyCode, char* text, int maxLength,
         renderPresent();
         sharedFpsLimiter.throttle();
     }
+
+    endTextInput();
 
     if (rc == 0 || nameLength > 0) {
         copy[nameLength] = '\0';
@@ -2146,9 +2153,9 @@ static void characterEditorDrawPerksFolder()
                 string = perkGetName(perk);
 
                 if (perkLevel == 1) {
-                    strcpy(perkName, string);
+                    snprintf(perkName, sizeof(perkName), "%s", string);
                 } else {
-                    sprintf(perkName, "%s (%d)", string, perkLevel);
+                    snprintf(perkName, sizeof(perkName), "%s (%d)", string, perkLevel);
                 }
 
                 if (characterEditorFolderViewDrawString(perkName)) {
@@ -2212,7 +2219,7 @@ static int characterEditorDrawKillsFolder()
                 gCharacterEditorFolderCardTitle = gCharacterEditorFolderCardString;
                 gCharacterEditorFolderCardSubtitle = NULL;
                 gCharacterEditorFolderCardDescription = killTypeGetDescription(kills[i].killTypeId);
-                sprintf(gCharacterEditorFolderCardString, "%s %s", killInfo->name, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126));
+                snprintf(gCharacterEditorFolderCardString, sizeof(gCharacterEditorFolderCardString), "%s %s", killInfo->name, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 126));
                 hasContent = true;
             }
         }
@@ -2377,7 +2384,7 @@ static void characterEditorDrawPcStats()
     }
 
     int level = pcGetStat(PC_STAT_LEVEL);
-    sprintf(stringBuffer, "%s %d",
+    snprintf(stringBuffer, sizeof(stringBuffer), "%s %d",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 113),
         level);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 32, stringBuffer, 640, 640, color);
@@ -2391,7 +2398,7 @@ static void characterEditorDrawPcStats()
     }
 
     int exp = pcGetStat(PC_STAT_EXPERIENCE);
-    sprintf(stringBuffer, "%s %s",
+    snprintf(stringBuffer, sizeof(stringBuffer), "%s %s",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 114),
         _itostndn(exp, formattedValueBuffer));
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 32, stringBuffer, 640, 640, color);
@@ -2417,7 +2424,7 @@ static void characterEditorDrawPcStats()
         formattedValue = _itostndn(expToNextLevel, formattedValueBuffer);
     }
 
-    sprintf(stringBuffer, "%s %s",
+    snprintf(stringBuffer, sizeof(stringBuffer), "%s %s",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, expMsgId),
         formattedValue);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 32, stringBuffer, 640, 640, color);
@@ -2535,7 +2542,7 @@ static void characterEditorDrawAge()
     age = critterGetStat(gDude, STAT_AGE);
     str = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 104);
 
-    sprintf(text, "%s %d", str, age);
+    snprintf(text, sizeof(text), "%s %d", str, age);
 
     width = _editorFrmImages[EDITOR_GRAPHIC_AGE_ON].getWidth();
     x = (width / 2) + 1 - (fontGetStringWidth(text) / 2);
@@ -2643,10 +2650,10 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 300);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    sprintf(t, "%d/%d", currHp, maxHp);
+    snprintf(t, sizeof(t), "%d/%d", currHp, maxHp);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 263, t, 640, 640, color);
 
     // Poisoned
@@ -2659,7 +2666,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 312);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Radiated
@@ -2672,7 +2679,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 313);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Eye Damage
@@ -2685,7 +2692,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 314);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Crippled Right Arm
@@ -2698,7 +2705,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 315);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Crippled Left Arm
@@ -2711,7 +2718,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 316);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Crippled Right Leg
@@ -2724,7 +2731,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 317);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // Crippled Left Leg
@@ -2737,7 +2744,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 318);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     y = 179;
@@ -2752,7 +2759,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 302);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     compat_itoa(critterGetStat(gDude, STAT_ARMOR_CLASS), t, 10);
@@ -2768,7 +2775,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 301);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     compat_itoa(critterGetStat(gDude, STAT_MAXIMUM_ACTION_POINTS), t, 10);
@@ -2784,7 +2791,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 311);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     compat_itoa(critterGetStat(gDude, STAT_CARRY_WEIGHT), t, 10);
@@ -2800,7 +2807,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 304);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     // SFALL: Display melee damage without "Bonus HtH Damage" bonus.
@@ -2822,10 +2829,10 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 305);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    sprintf(t, "%d%%", critterGetStat(gDude, STAT_DAMAGE_RESISTANCE));
+    snprintf(t, sizeof(t), "%d%%", critterGetStat(gDude, STAT_DAMAGE_RESISTANCE));
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 288, t, 640, 640, color);
 
     // Poison Resistance
@@ -2838,10 +2845,10 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 306);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    sprintf(t, "%d%%", critterGetStat(gDude, STAT_POISON_RESISTANCE));
+    snprintf(t, sizeof(t), "%d%%", critterGetStat(gDude, STAT_POISON_RESISTANCE));
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 288, t, 640, 640, color);
 
     // Radiation Resistance
@@ -2854,10 +2861,10 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 307);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    sprintf(t, "%d%%", critterGetStat(gDude, STAT_RADIATION_RESISTANCE));
+    snprintf(t, sizeof(t), "%d%%", critterGetStat(gDude, STAT_RADIATION_RESISTANCE));
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 288, t, 640, 640, color);
 
     // Sequence
@@ -2870,7 +2877,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 308);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     compat_itoa(critterGetStat(gDude, STAT_SEQUENCE), t, 10);
@@ -2886,7 +2893,7 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 309);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
     compat_itoa(critterGetStat(gDude, STAT_HEALING_RATE), t, 10);
@@ -2902,10 +2909,10 @@ static void characterEditorDrawDerivedStats()
     }
 
     messageListItemText = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 310);
-    sprintf(t, "%s", messageListItemText);
+    snprintf(t, sizeof(t), "%s", messageListItemText);
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 194, t, 640, 640, color);
 
-    sprintf(t, "%d%%", critterGetStat(gDude, STAT_CRITICAL_CHANCE));
+    snprintf(t, sizeof(t), "%d%%", critterGetStat(gDude, STAT_CRITICAL_CHANCE));
     fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 288, t, 640, 640, color);
 }
 
@@ -2983,7 +2990,7 @@ static void characterEditorDrawSkills(int a1)
         fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 380, str, 640, 640, color);
 
         value = skillGetValue(gDude, i);
-        sprintf(valueString, "%d%%", value);
+        snprintf(valueString, sizeof(valueString), "%d%%", value);
 
         fontDrawText(gCharacterEditorWindowBuffer + 640 * y + 573, valueString, 640, 640, color);
 
@@ -3150,7 +3157,7 @@ static void characterEditorDrawCard()
         char formatted[150]; // TODO: Size is probably wrong.
         const char* base = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 137);
         int defaultValue = skillGetDefaultValue(skill);
-        sprintf(formatted, "%s %d%% %s", base, defaultValue, attributesDescription);
+        snprintf(formatted, sizeof(formatted), "%s %d%% %s", base, defaultValue, attributesDescription);
 
         graphicId = skillGetFrmId(skill);
         title = skillGetName(skill);
@@ -3197,7 +3204,7 @@ static int characterEditorEditName()
 
     int nameWindowX = (screenGetWidth() - EDITOR_WINDOW_WIDTH) / 2 + 17;
     int nameWindowY = (screenGetHeight() - EDITOR_WINDOW_HEIGHT) / 2;
-    int win = windowCreate(nameWindowX, nameWindowY, windowWidth, windowHeight, 256, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+    int win = windowCreate(nameWindowX, nameWindowY, windowWidth, windowHeight, 256, WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
     if (win == -1) {
         return -1;
     }
@@ -3329,7 +3336,7 @@ static int characterEditorEditAge()
 
     int ageWindowX = (screenGetWidth() - EDITOR_WINDOW_WIDTH) / 2 + _editorFrmImages[EDITOR_GRAPHIC_NAME_ON].getWidth() + 9;
     int ageWindowY = (screenGetHeight() - EDITOR_WINDOW_HEIGHT) / 2;
-    win = windowCreate(ageWindowX, ageWindowY, windowWidth, windowHeight, 256, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+    win = windowCreate(ageWindowX, ageWindowY, windowWidth, windowHeight, 256, WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
     if (win == -1) {
         return -1;
     }
@@ -3571,7 +3578,7 @@ static void characterEditorEditGender()
         + _editorFrmImages[EDITOR_GRAPHIC_NAME_ON].getWidth()
         + _editorFrmImages[EDITOR_GRAPHIC_AGE_ON].getWidth();
     int genderWindowY = (screenGetHeight() - EDITOR_WINDOW_HEIGHT) / 2;
-    int win = windowCreate(genderWindowX, genderWindowY, windowWidth, windowHeight, 256, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+    int win = windowCreate(genderWindowX, genderWindowY, windowWidth, windowHeight, 256, WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
 
     if (win == -1) {
         return;
@@ -3818,7 +3825,7 @@ static int characterEditorShowOptions()
         int optionsWindowY = (screenGetHeight() != 480)
             ? (screenGetHeight() - _editorFrmImages[41].getHeight()) / 2
             : 90;
-        int win = windowCreate(optionsWindowX, optionsWindowY, _editorFrmImages[41].getWidth(), _editorFrmImages[41].getHeight(), 256, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+        int win = windowCreate(optionsWindowX, optionsWindowY, _editorFrmImages[41].getWidth(), _editorFrmImages[41].getHeight(), 256, WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
         if (win == -1) {
             return -1;
         }
@@ -3962,9 +3969,9 @@ static int characterEditorShowOptions()
                         string4[0] = '\0';
                         strcat(string4, string1);
 
-                        if (!characterFileExists(string4)) {
+                        if (characterFileExists(string4)) {
                             // already exists
-                            sprintf(string4,
+                            snprintf(string4, sizeof(string4),
                                 "%s %s",
                                 compat_strupr(string1),
                                 getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 609));
@@ -3985,7 +3992,7 @@ static int characterEditorShowOptions()
                             strcat(string4, string1);
 
                             if (characterPrintToFile(string4) == 0) {
-                                sprintf(string4,
+                                snprintf(string4, sizeof(string4),
                                     "%s%s",
                                     compat_strupr(string1),
                                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 607));
@@ -3993,7 +4000,7 @@ static int characterEditorShowOptions()
                             } else {
                                 soundPlayFile("iisxxxx1");
 
-                                sprintf(string4,
+                                snprintf(string4, sizeof(string4),
                                     "%s%s%s",
                                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 611),
                                     compat_strupr(string1),
@@ -4126,7 +4133,7 @@ static int characterEditorShowOptions()
 
                         bool shouldSave;
                         if (characterFileExists(string4)) {
-                            sprintf(string4, "%s %s",
+                            snprintf(string4, sizeof(string4), "%s %s",
                                 compat_strupr(string1),
                                 getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 609));
                             strcpy(string5, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 610));
@@ -4149,13 +4156,13 @@ static int characterEditorShowOptions()
 
                             if (gcdSave(string4) != 0) {
                                 soundPlayFile("iisxxxx1");
-                                sprintf(string4, "%s%s!",
+                                snprintf(string4, sizeof(string4), "%s%s!",
                                     compat_strupr(string1),
                                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 611));
                                 showDialogBox(string4, NULL, 0, 169, 126, _colorTable[32328], NULL, _colorTable[32328], DIALOG_BOX_LARGE);
                                 rc = 0;
                             } else {
-                                sprintf(string4, "%s%s",
+                                snprintf(string4, sizeof(string4), "%s%s",
                                     compat_strupr(string1),
                                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 607));
                                 showDialogBox(string4, NULL, 0, 169, 126, _colorTable[992], NULL, _colorTable[992], DIALOG_BOX_LARGE);
@@ -4224,7 +4231,7 @@ static int characterEditorShowOptions()
 
         int v42 = 0;
         if (characterFileExists(title)) {
-            sprintf(title,
+            snprintf(title, sizeof(title),
                 "%s %s",
                 compat_strupr(fileName),
                 getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 609));
@@ -4248,7 +4255,7 @@ static int characterEditorShowOptions()
             if (characterPrintToFile(title) != 0) {
                 soundPlayFile("iisxxxx1");
 
-                sprintf(title,
+                snprintf(title, sizeof(title),
                     "%s%s%s",
                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 611),
                     compat_strupr(fileName),
@@ -4318,7 +4325,7 @@ static int characterPrintToFile(const char* fileName)
     int year;
     gameTimeGetDate(&month, &day, &year);
 
-    sprintf(title1, "%.2d %s %d  %.4d %s",
+    snprintf(title1, sizeof(title1), "%.2d %s %d  %.4d %s",
         day,
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 500 + month - 1),
         year,
@@ -4337,7 +4344,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Name
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %s",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 642),
         critterGetName(gDude));
@@ -4352,14 +4359,14 @@ static int characterPrintToFile(const char* fileName)
     }
 
     // Age
-    sprintf(title2,
+    snprintf(title2, sizeof(title2),
         "%s%s %d",
         title1,
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 643),
         critterGetStat(gDude, STAT_AGE));
 
     // Gender
-    sprintf(title3,
+    snprintf(title3, sizeof(title3),
         "%s%s %s",
         title2,
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 644),
@@ -4368,7 +4375,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString(title3, stream);
     fileWriteString("\n", stream);
 
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %s ",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 647),
         pcGetStat(PC_STAT_LEVEL),
@@ -4384,7 +4391,7 @@ static int characterPrintToFile(const char* fileName)
         strcat(title1, padding);
     }
 
-    sprintf(title2,
+    snprintf(title2, sizeof(title2),
         "%s%s %s",
         title1,
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 649),
@@ -4394,12 +4401,12 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Statistics
-    sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 623));
+    snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 623));
 
     // Strength / Hit Points / Sequence
     //
     // FIXME: There is bug - it shows strength instead of sequence.
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.3d/%.3d %s %.2d",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 624),
         critterGetStat(gDude, STAT_STRENGTH),
@@ -4412,7 +4419,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Perception / Armor Class / Healing Rate
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.3d %s %.2d",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 627),
         critterGetStat(gDude, STAT_PERCEPTION),
@@ -4424,7 +4431,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Endurance / Action Points / Critical Chance
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.2d %s %.3d%%",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 630),
         critterGetStat(gDude, STAT_ENDURANCE),
@@ -4442,7 +4449,7 @@ static int characterPrintToFile(const char* fileName)
     }
 
     // Charisma / Melee Damage / Carry Weight
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.2d %s %.3d lbs.",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 633),
         critterGetStat(gDude, STAT_CHARISMA),
@@ -4454,7 +4461,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Intelligence / Damage Resistance
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.3d%%",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 636),
         critterGetStat(gDude, STAT_INTELLIGENCE),
@@ -4464,7 +4471,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Agility / Radiation Resistance
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.3d%%",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 638),
         critterGetStat(gDude, STAT_AGILITY),
@@ -4474,7 +4481,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Luck / Poison Resistance
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %.2d %s %.3d%%",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 640),
         critterGetStat(gDude, STAT_LUCK),
@@ -4488,13 +4495,13 @@ static int characterPrintToFile(const char* fileName)
 
     if (gCharacterEditorTempTraits[0] != -1) {
         // ::: Traits :::
-        sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 650));
+        snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 650));
         fileWriteString(title1, stream);
 
         // NOTE: The original code does not use loop, or it was optimized away.
         for (int index = 0; index < TRAITS_MAX_SELECTED_COUNT; index++) {
             if (gCharacterEditorTempTraits[index] != -1) {
-                sprintf(title1, "  %s", traitGetName(gCharacterEditorTempTraits[index]));
+                snprintf(title1, sizeof(title1), "  %s", traitGetName(gCharacterEditorTempTraits[index]));
                 fileWriteString(title1, stream);
                 fileWriteString("\n", stream);
             }
@@ -4510,16 +4517,16 @@ static int characterPrintToFile(const char* fileName)
 
     if (perk < PERK_COUNT) {
         // ::: Perks :::
-        sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 651));
+        snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 651));
         fileWriteString(title1, stream);
 
         for (perk = 0; perk < PERK_COUNT; perk++) {
             int rank = perkGetRank(gDude, perk);
             if (rank != 0) {
                 if (rank == 1) {
-                    sprintf(title1, "  %s", perkGetName(perk));
+                    snprintf(title1, sizeof(title1), "  %s", perkGetName(perk));
                 } else {
-                    sprintf(title1, "  %s (%d)", perkGetName(perk), rank);
+                    snprintf(title1, sizeof(title1), "  %s (%d)", perkGetName(perk), rank);
                 }
 
                 fileWriteString(title1, stream);
@@ -4531,7 +4538,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // ::: Karma :::
-    sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 652));
+    snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 652));
     fileWriteString(title1, stream);
 
     for (int index = 0; index < gKarmaEntriesLength; index++) {
@@ -4547,7 +4554,7 @@ static int characterPrintToFile(const char* fileName)
 
             if (reputation < gGenericReputationEntriesLength) {
                 GenericReputationEntry* reputationDescription = &(gGenericReputationEntries[reputation]);
-                sprintf(title1,
+                snprintf(title1, sizeof(title1),
                     "  %s: %s (%s)",
                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
                     compat_itoa(gGameGlobalVars[GVAR_PLAYER_REPUTATION], title2, 10),
@@ -4557,7 +4564,7 @@ static int characterPrintToFile(const char* fileName)
             }
         } else {
             if (gGameGlobalVars[karmaEntry->gvar] != 0) {
-                sprintf(title1, "  %s", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaEntry->name));
+                snprintf(title1, sizeof(title1), "  %s", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, karmaEntry->name));
                 fileWriteString(title1, stream);
                 fileWriteString("\n", stream);
             }
@@ -4573,7 +4580,7 @@ static int characterPrintToFile(const char* fileName)
                 fileWriteString("\n", stream);
 
                 // ::: Reputation :::
-                sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 657));
+                snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 657));
                 fileWriteString(title1, stream);
                 hasTownReputationHeading = true;
             }
@@ -4600,7 +4607,7 @@ static int characterPrintToFile(const char* fileName)
                 townReputationMessageId = 2000; // Idolized
             }
 
-            sprintf(title1,
+            snprintf(title1, sizeof(title1),
                 "  %s: %s",
                 title2,
                 getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationMessageId));
@@ -4616,12 +4623,12 @@ static int characterPrintToFile(const char* fileName)
                 fileWriteString("\n", stream);
 
                 // ::: Addictions :::
-                sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 656));
+                snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 656));
                 fileWriteString(title1, stream);
                 hasAddictionsHeading = true;
             }
 
-            sprintf(title1,
+            snprintf(title1, sizeof(title1),
                 "  %s",
                 getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 1004 + index));
             fileWriteString(title1, stream);
@@ -4632,12 +4639,12 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // ::: Skills ::: / ::: Kills :::
-    sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 653));
+    snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 653));
     fileWriteString(title1, stream);
 
     int killType = 0;
     for (int skill = 0; skill < SKILL_COUNT; skill++) {
-        sprintf(title1, "%s ", skillGetName(skill));
+        snprintf(title1, sizeof(title1), "%s ", skillGetName(skill));
 
         // NOTE: Uninline.
         _AddDots(title1 + strlen(title1), 16 - static_cast<int>(strlen(title1)));
@@ -4647,12 +4654,12 @@ static int characterPrintToFile(const char* fileName)
         for (; killType < KILL_TYPE_COUNT; killType++) {
             int killsCount = killsGetByType(killType);
             if (killsCount > 0) {
-                sprintf(title2, "%s ", killTypeGetName(killType));
+                snprintf(title2, sizeof(title2), "%s ", killTypeGetName(killType));
 
                 // NOTE: Uninline.
                 _AddDots(title2 + strlen(title2), 16 - static_cast<int>(strlen(title2)));
 
-                sprintf(title3,
+                snprintf(title3, sizeof(title3),
                     "  %s %.3d%%        %s %.3d\n",
                     title1,
                     skillGetValue(gDude, skill),
@@ -4664,7 +4671,7 @@ static int characterPrintToFile(const char* fileName)
         }
 
         if (!hasKillType) {
-            sprintf(title3,
+            snprintf(title3, sizeof(title3),
                 "  %s %.3d%%\n",
                 title1,
                 skillGetValue(gDude, skill));
@@ -4675,7 +4682,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // ::: Inventory :::
-    sprintf(title1, "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 654));
+    snprintf(title1, sizeof(title1), "%s\n", getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 654));
     fileWriteString(title1, stream);
 
     Inventory* inventory = &(gDude->data.inventory);
@@ -4690,7 +4697,7 @@ static int characterPrintToFile(const char* fileName)
 
             InventoryItem* inventoryItem = &(inventory->items[inventoryItemIndex]);
 
-            sprintf(title2,
+            snprintf(title2, sizeof(title2),
                 "  %sx %s",
                 _itostndn(inventoryItem->quantity, title3),
                 objectGetName(inventoryItem->item));
@@ -4712,7 +4719,7 @@ static int characterPrintToFile(const char* fileName)
     fileWriteString("\n", stream);
 
     // Total Weight:
-    sprintf(title1,
+    snprintf(title1, sizeof(title1),
         "%s %d lbs.",
         getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 655),
         objectGetInventoryWeight(gDude));
@@ -4931,13 +4938,6 @@ static char* _itostndn(int value, char* dest)
 // 0x43AAEC
 static int characterEditorDrawCardWithOptions(int graphicId, const char* name, const char* attributes, char* description)
 {
-    unsigned char* ptr;
-    int v9;
-    int x;
-    int y;
-    short beginnings[WORD_WRAP_MAX_COUNT];
-    short beginningsCount;
-
     FrmImage frmImage;
     int fid = buildFid(OBJ_TYPE_SKILLDEX, graphicId, 0, 0, 0);
     if (!frmImage.lock(fid)) {
@@ -4951,20 +4951,20 @@ static int characterEditorDrawCardWithOptions(int graphicId, const char* name, c
         gCharacterEditorWindowBuffer + 640 * 309 + 484,
         640);
 
-    v9 = 150;
-    ptr = frmImage.getData();
-    for (y = 0; y < frmImage.getHeight(); y++) {
-        for (x = 0; x < frmImage.getWidth(); x++) {
-            if (_HighRGB_(*ptr) < 2 && v9 >= x) {
-                v9 = x;
+    int extraDescriptionWidth = 150;
+    unsigned char* data = frmImage.getData();
+    for (int y = 0; y < frmImage.getHeight(); y++) {
+        for (int x = 0; x < frmImage.getWidth(); x++) {
+            if (HighRGB(*data) < 2) {
+                extraDescriptionWidth = std::min(extraDescriptionWidth, x);
             }
-            ptr++;
+            data++;
         }
     }
 
-    v9 -= 8;
-    if (v9 < 0) {
-        v9 = 0;
+    extraDescriptionWidth -= 8;
+    if (extraDescriptionWidth < 0) {
+        extraDescriptionWidth = 0;
     }
 
     fontSetCurrent(102);
@@ -4979,20 +4979,21 @@ static int characterEditorDrawCardWithOptions(int graphicId, const char* name, c
         fontDrawText(gCharacterEditorWindowBuffer + 640 * (268 + nameFontLineHeight - attributesFontLineHeight) + 348 + nameWidth + 8, attributes, 640, 640, _colorTable[0]);
     }
 
-    y = nameFontLineHeight;
-    windowDrawLine(gCharacterEditorWindow, 348, y + 272, 613, y + 272, _colorTable[0]);
-    windowDrawLine(gCharacterEditorWindow, 348, y + 273, 613, y + 273, _colorTable[0]);
+    windowDrawLine(gCharacterEditorWindow, 348, nameFontLineHeight + 272, 613, nameFontLineHeight + 272, _colorTable[0]);
+    windowDrawLine(gCharacterEditorWindow, 348, nameFontLineHeight + 273, 613, nameFontLineHeight + 273, _colorTable[0]);
 
     fontSetCurrent(101);
 
     int descriptionFontLineHeight = fontGetLineHeight();
 
-    if (wordWrap(description, v9 + 136, beginnings, &beginningsCount) != 0) {
+    short beginnings[WORD_WRAP_MAX_COUNT];
+    short beginningsCount;
+    if (wordWrap(description, extraDescriptionWidth + 136, beginnings, &beginningsCount) != 0) {
         // TODO: Leaking graphic handle.
         return -1;
     }
 
-    y = 315;
+    int y = 315;
     for (short i = 0; i < beginningsCount - 1; i++) {
         short beginning = beginnings[i];
         short ending = beginnings[i + 1];
@@ -5221,7 +5222,7 @@ static void characterEditorHandleAdjustSkillButtonPressed(int keyCode)
                     if (skillAdd(gDude, gCharacterEditorCurrentSkill) == -3) {
                         soundPlayFile("iisxxxx1");
 
-                        sprintf(title, "%s:", skillGetName(gCharacterEditorCurrentSkill));
+                        snprintf(title, sizeof(title), "%s:", skillGetName(gCharacterEditorCurrentSkill));
                         // At maximum level.
                         strcpy(body1, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 132));
                         // Unable to increment it.
@@ -5249,7 +5250,7 @@ static void characterEditorHandleAdjustSkillButtonPressed(int keyCode)
                 if (rc == 0) {
                     soundPlayFile("iisxxxx1");
 
-                    sprintf(title, "%s:", skillGetName(gCharacterEditorCurrentSkill));
+                    snprintf(title, sizeof(title), "%s:", skillGetName(gCharacterEditorCurrentSkill));
                     // At minimum level.
                     strcpy(body1, getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 134));
                     // Unable to decrement it.
@@ -5528,7 +5529,7 @@ static void characterEditorDrawKarmaFolder()
                 char reputationValue[32];
                 compat_itoa(gGameGlobalVars[GVAR_PLAYER_REPUTATION], reputationValue, 10);
 
-                sprintf(formattedText,
+                snprintf(formattedText, sizeof(formattedText),
                     "%s: %s (%s)",
                     getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, 125),
                     reputationValue,
@@ -5604,7 +5605,7 @@ static void characterEditorDrawKarmaFolder()
             }
 
             msg = getmsg(&gCharacterEditorMessageList, &gCharacterEditorMessageListItem, townReputationBaseMessageId);
-            sprintf(formattedText,
+            snprintf(formattedText, sizeof(formattedText),
                 "%s: %s",
                 cityShortName,
                 msg);
@@ -5777,7 +5778,7 @@ static void perkDialogRefreshPerks()
 
     int rank = perkGetRank(gDude, perk);
     if (rank != 0) {
-        sprintf(perkRankBuffer, "(%d)", rank);
+        snprintf(perkRankBuffer, sizeof(perkRankBuffer), "(%d)", rank);
         perkRank = perkRankBuffer;
     }
 
@@ -5808,7 +5809,7 @@ static int perkDialogShow()
     int perkWindowY = screenGetHeight() != 480
         ? (screenGetHeight() - PERK_WINDOW_HEIGHT) / 2
         : PERK_WINDOW_Y;
-    gPerkDialogWindow = windowCreate(perkWindowX, perkWindowY, PERK_WINDOW_WIDTH, PERK_WINDOW_HEIGHT, 256, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+    gPerkDialogWindow = windowCreate(perkWindowX, perkWindowY, PERK_WINDOW_WIDTH, PERK_WINDOW_HEIGHT, 256, WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
     if (gPerkDialogWindow == -1) {
         _perkDialogBackgroundFrmImage.unlock();
         debugPrint("\n *** Error running perks dialog window ***\n");
@@ -5930,7 +5931,7 @@ static int perkDialogShow()
 
     int rank = perkGetRank(gDude, perk);
     if (rank != 0) {
-        sprintf(perkRankBuffer, "(%d)", rank);
+        snprintf(perkRankBuffer, sizeof(perkRankBuffer), "(%d)", rank);
         perkRank = perkRankBuffer;
     }
 
@@ -6319,7 +6320,7 @@ static int perkDialogDrawPerks()
 
         if (perkGetRank(gDude, gPerkDialogOptionList[index].value) != 0) {
             char rankString[256];
-            sprintf(rankString, "(%d)", perkGetRank(gDude, gPerkDialogOptionList[index].value));
+            snprintf(rankString, sizeof(rankString), "(%d)", perkGetRank(gDude, gPerkDialogOptionList[index].value));
             fontDrawText(gPerkDialogWindowBuffer + PERK_WINDOW_WIDTH * y + 207, rankString, PERK_WINDOW_WIDTH, PERK_WINDOW_WIDTH, color);
         }
 
@@ -6653,10 +6654,8 @@ static int perkDialogDrawCard(int frmId, const char* name, const char* rank, cha
     for (int y = 0; y < frmImage.getHeight(); y++) {
         unsigned char* stride = data;
         for (int x = 0; x < frmImage.getWidth(); x++) {
-            if (_HighRGB_(*stride) < 2) {
-                if (extraDescriptionWidth > x) {
-                    extraDescriptionWidth = x;
-                }
+            if (HighRGB(*stride) < 2) {
+                extraDescriptionWidth = std::min(extraDescriptionWidth, x);
             }
             stride++;
         }

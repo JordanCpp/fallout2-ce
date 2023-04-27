@@ -149,12 +149,12 @@ int gameMoviePlay(int movie, int flags)
     bool movieFound = false;
 
     if (compat_stricmp(language, ENGLISH) != 0) {
-        sprintf(movieFilePath, "art\\%s\\cuts\\%s", language, gMovieFileNames[movie]);
+        snprintf(movieFilePath, sizeof(movieFilePath), "art\\%s\\cuts\\%s", language, gMovieFileNames[movie]);
         movieFound = dbGetFileSize(movieFilePath, &movieFileSize) == 0;
     }
 
     if (!movieFound) {
-        sprintf(movieFilePath, "art\\cuts\\%s", gMovieFileNames[movie]);
+        snprintf(movieFilePath, sizeof(movieFilePath), "art\\cuts\\%s", gMovieFileNames[movie]);
         movieFound = dbGetFileSize(movieFilePath, &movieFileSize) == 0;
     }
 
@@ -176,7 +176,7 @@ int gameMoviePlay(int movie, int flags)
         GAME_MOVIE_WINDOW_WIDTH,
         GAME_MOVIE_WINDOW_HEIGHT,
         0,
-        WINDOW_FLAG_0x10);
+        WINDOW_MODAL);
     if (win == -1) {
         gGameMovieIsPlaying = false;
         return -1;
@@ -276,13 +276,17 @@ int gameMoviePlay(int movie, int flags)
 
         windowSetFont(oldFont);
 
-        float r = (float)((_Color2RGB_(oldTextColor) & 0x7C00) >> 10) * flt_50352A;
-        float g = (float)((_Color2RGB_(oldTextColor) & 0x3E0) >> 5) * flt_50352A;
-        float b = (float)(_Color2RGB_(oldTextColor) & 0x1F) * flt_50352A;
+        float r = (float)((Color2RGB(oldTextColor) & 0x7C00) >> 10) * flt_50352A;
+        float g = (float)((Color2RGB(oldTextColor) & 0x3E0) >> 5) * flt_50352A;
+        float b = (float)(Color2RGB(oldTextColor) & 0x1F) * flt_50352A;
         windowSetTextColor(r, g, b);
     }
 
     windowDestroy(win);
+
+    // CE: Destroying a window redraws only content it was covering (centered
+    // 640x480). This leads to everything outside this rect to remain black.
+    windowRefreshAll(&_scr_size);
 
     if ((flags & GAME_MOVIE_PAUSE_MUSIC) != 0) {
         backgroundSoundResume();
@@ -332,7 +336,7 @@ static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath)
         path = separator + 1;
     }
 
-    sprintf(gGameMovieSubtitlesFilePath, "text\\%s\\cuts\\%s", settings.system.language.c_str(), path);
+    snprintf(gGameMovieSubtitlesFilePath, sizeof(gGameMovieSubtitlesFilePath), "text\\%s\\cuts\\%s", settings.system.language.c_str(), path);
 
     char* pch = strrchr(gGameMovieSubtitlesFilePath, '.');
     if (*pch != '\0') {

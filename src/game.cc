@@ -3,12 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h> // access
-#endif
-
 #include "actions.h"
 #include "animation.h"
 #include "art.h"
@@ -25,7 +19,6 @@
 #include "debug.h"
 #include "display_monitor.h"
 #include "draw.h"
-#include "electronic_registration.h"
 #include "endgame.h"
 #include "font_manager.h"
 #include "game_dialog.h"
@@ -51,12 +44,15 @@
 #include "perk.h"
 #include "pipboy.h"
 #include "platform_compat.h"
+#include "preferences.h"
 #include "proto.h"
 #include "queue.h"
 #include "random.h"
 #include "scripts.h"
 #include "settings.h"
 #include "sfall_config.h"
+#include "sfall_global_vars.h"
+#include "sfall_lists.h"
 #include "skill.h"
 #include "skilldex.h"
 #include "stat.h"
@@ -116,15 +112,8 @@ int _game_user_wants_to_quit = 0;
 // 0x58E940
 MessageList gMiscMessageList;
 
-// master.dat loading result
-//
-// 0x58E948
-int _master_db_handle;
-
-// critter.dat loading result
-//
-// 0x58E94C
-int _critter_db_handle;
+// CE: Sonora folks like to store objects in global variables.
+static void** gGameGlobalPointers = nullptr;
 
 // 0x442580
 int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4, int argc, char** argv)
@@ -149,7 +138,10 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
         return -1;
     }
 
-    runElectronicRegistration();
+    // Message list repository is considered a specialized file manager, so
+    // it should be initialized early in the process.
+    messageListRepositoryInit();
+
     programWindowSetTitle(windowTitle);
     _initWindow(1, a4);
     paletteInit();
@@ -313,7 +305,7 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
 
     debugPrint(">message_init\t");
 
-    sprintf(path, "%s%s", asc_5186C8, "misc.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "misc.msg");
 
     if (!messageListLoad(&gMiscMessageList, path)) {
         debugPrint("Failed on message_load\n");
@@ -345,6 +337,18 @@ int gameInitWithOptions(const char* windowTitle, bool isMapper, int font, int a4
 
     // SFALL
     premadeCharactersInit();
+
+    if (!sfallGlobalVarsInit()) {
+        debugPrint("Failed on sfallGlobalVarsInit");
+        return -1;
+    }
+
+    if (!sfallListsInit()) {
+        debugPrint("Failed on sfallListsInit");
+        return -1;
+    }
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_MISC, &gMiscMessageList);
 
     return 0;
 }
@@ -386,6 +390,11 @@ void gameReset()
     _game_user_wants_to_quit = 0;
     automapReset();
     _init_options_menu();
+
+    // SFALL
+    sfallGlobalVarsReset();
+    sfallListsReset();
+    messageListRepositoryReset();
 }
 
 // 0x442C34
@@ -394,9 +403,12 @@ void gameExit()
     debugPrint("\nGame Exit\n");
 
     // SFALL
+    sfallListsExit();
+    sfallGlobalVarsExit();
     premadeCharactersExit();
 
     tileDisable();
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_MISC, nullptr);
     messageListFree(&gMiscMessageList);
     combatExit();
     gameDialogExit();
@@ -430,6 +442,7 @@ void gameExit()
     endgameDeathEndingExit();
     interfaceFontsExit();
     _windowClose();
+    messageListRepositoryExit();
     dbExit();
     settingsExit(true);
     sfallConfigExit();
@@ -693,7 +706,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
         }
 
         if (gIsMapper) {
-            tileSetCenter(gDude->tile, TILE_SET_CENTER_FLAG_0x01);
+            tileSetCenter(gDude->tile, TILE_SET_CENTER_REFRESH_WINDOW);
         } else {
             _tile_scroll_to(gDude->tile, 2);
         }
@@ -798,7 +811,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
             MessageList messageList;
             if (messageListInit(&messageList)) {
                 char path[COMPAT_MAX_PATH];
-                sprintf(path, "%s%s", asc_5186C8, "editor.msg");
+                snprintf(path, sizeof(path), "%s%s", asc_5186C8, "editor.msg");
 
                 if (messageListLoad(&messageList, path)) {
                     MessageListItem messageListItem;
@@ -807,7 +820,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
                         char* time = gameTimeGetTimeString();
 
                         char date[128];
-                        sprintf(date, "%s: %d/%d %s", messageListItem.text, day, year, time);
+                        snprintf(date, sizeof(date), "%s: %d/%d %s", messageListItem.text, day, year, time);
 
                         displayMonitorAddMessage(date);
                     }
@@ -876,7 +889,7 @@ int gameHandleKey(int eventCode, bool isInCombatMode)
             soundPlayFile("ib1p1xx1");
 
             char version[VERSION_MAX];
-            versionGetVersion(version);
+            versionGetVersion(version, sizeof(version));
             displayMonitorAddMessage(version);
             displayMonitorAddMessage(_aDec11199816543);
         }
@@ -960,9 +973,9 @@ int gameSetGlobalVar(int var, int value)
             if (diff != 0) {
                 char formattedMessage[80];
                 if (diff > 0) {
-                    sprintf(formattedMessage, "You gained %d karma.", diff);
+                    snprintf(formattedMessage, sizeof(formattedMessage), "You gained %d karma.", diff);
                 } else {
-                    sprintf(formattedMessage, "You lost %d karma.", -diff);
+                    snprintf(formattedMessage, sizeof(formattedMessage), "You lost %d karma.", -diff);
                 }
                 displayMonitorAddMessage(formattedMessage);
             }
@@ -978,7 +991,18 @@ int gameSetGlobalVar(int var, int value)
 // 0x443CC8
 static int gameLoadGlobalVars()
 {
-    return globalVarsRead("data\\vault13.gam", "GAME_GLOBAL_VARS:", &gGameGlobalVarsLength, &gGameGlobalVars);
+    if (globalVarsRead("data\\vault13.gam", "GAME_GLOBAL_VARS:", &gGameGlobalVarsLength, &gGameGlobalVars) != 0) {
+        return -1;
+    }
+
+    gGameGlobalPointers = reinterpret_cast<void**>(internal_malloc(sizeof(*gGameGlobalPointers) * gGameGlobalVarsLength));
+    if (gGameGlobalPointers == nullptr) {
+        return -1;
+    }
+
+    memset(gGameGlobalPointers, 0, sizeof(*gGameGlobalPointers) * gGameGlobalVarsLength);
+
+    return 0;
 }
 
 // 0x443CE8
@@ -1119,11 +1143,18 @@ static void gameFreeGlobalVars()
         internal_free(gGameGlobalVars);
         gGameGlobalVars = NULL;
     }
+
+    if (gGameGlobalPointers != nullptr) {
+        internal_free(gGameGlobalPointers);
+        gGameGlobalPointers = nullptr;
+    }
 }
 
 // 0x443F74
 static void showHelp()
 {
+    ScopedGameMode gm(GameMode::kHelp);
+
     bool isoWasEnabled = isoDisable();
     gameMouseObjectsHide();
 
@@ -1132,9 +1163,13 @@ static void showHelp()
     bool colorCycleWasEnabled = colorCycleEnabled();
     colorCycleDisable();
 
+    // CE: Help screen uses separate color palette which is incompatible with
+    // colors in other windows. Setup overlay to hide everything.
+    int overlay = windowCreate(0, 0, screenGetWidth(), screenGetHeight(), 0, WINDOW_HIDDEN | WINDOW_MOVE_ON_TOP);
+
     int helpWindowX = (screenGetWidth() - HELP_SCREEN_WIDTH) / 2;
     int helpWindowY = (screenGetHeight() - HELP_SCREEN_HEIGHT) / 2;
-    int win = windowCreate(helpWindowX, helpWindowY, HELP_SCREEN_WIDTH, HELP_SCREEN_HEIGHT, 0, WINDOW_HIDDEN | WINDOW_FLAG_0x04);
+    int win = windowCreate(helpWindowX, helpWindowY, HELP_SCREEN_WIDTH, HELP_SCREEN_HEIGHT, 0, WINDOW_HIDDEN | WINDOW_MOVE_ON_TOP);
     if (win != -1) {
         unsigned char* windowBuffer = windowGetBuffer(win);
         if (windowBuffer != NULL) {
@@ -1143,9 +1178,20 @@ static void showHelp()
             if (backgroundFrmImage.lock(backgroundFid)) {
                 paletteSetEntries(gPaletteBlack);
                 blitBufferToBuffer(backgroundFrmImage.getData(), HELP_SCREEN_WIDTH, HELP_SCREEN_HEIGHT, HELP_SCREEN_WIDTH, windowBuffer, HELP_SCREEN_WIDTH);
-                windowUnhide(win);
+
                 colorPaletteLoad("art\\intrface\\helpscrn.pal");
                 paletteSetEntries(_cmap);
+
+                // CE: Fill overlay with darkest color in the palette. It might
+                // not be completely black, but at least it's uniform.
+                bufferFill(windowGetBuffer(overlay),
+                    screenGetWidth(),
+                    screenGetHeight(),
+                    screenGetWidth(),
+                    intensityColorTable[_colorTable[0]][0]);
+
+                windowShow(overlay);
+                windowShow(win);
 
                 while (inputGetInput() == -1 && _game_user_wants_to_quit == 0) {
                     sharedFpsLimiter.mark();
@@ -1166,6 +1212,7 @@ static void showHelp()
             }
         }
 
+        windowDestroy(overlay);
         windowDestroy(win);
         colorPaletteLoad("color.pal");
         paletteSetEntries(_cmap);
@@ -1240,19 +1287,13 @@ int showQuitConfirmationDialog()
 // 0x44418C
 static int gameDbInit()
 {
-    int hashing;
     const char* main_file_name;
     const char* patch_file_name;
     int patch_index;
     char filename[COMPAT_MAX_PATH];
 
-    hashing = 0;
     main_file_name = NULL;
     patch_file_name = NULL;
-
-    if (settings.system.hashing) {
-        _db_enable_hash_table_();
-    }
 
     main_file_name = settings.system.master_dat_path.c_str();
     if (*main_file_name == '\0') {
@@ -1264,8 +1305,8 @@ static int gameDbInit()
         patch_file_name = NULL;
     }
 
-    _master_db_handle = dbOpen(main_file_name, 0, patch_file_name, 1);
-    if (_master_db_handle == -1) {
+    int master_db_handle = dbOpen(main_file_name, 0, patch_file_name, 1);
+    if (master_db_handle == -1) {
         showMesageBox("Could not find the master datafile. Please make sure the FALLOUT CD is in the drive and that you are running FALLOUT from the directory you installed it to.");
         return -1;
     }
@@ -1280,22 +1321,23 @@ static int gameDbInit()
         patch_file_name = NULL;
     }
 
-    _critter_db_handle = dbOpen(main_file_name, 0, patch_file_name, 1);
-    if (_critter_db_handle == -1) {
-        _db_select(_master_db_handle);
+    int critter_db_handle = dbOpen(main_file_name, 0, patch_file_name, 1);
+    if (critter_db_handle == -1) {
         showMesageBox("Could not find the critter datafile. Please make sure the FALLOUT CD is in the drive and that you are running FALLOUT from the directory you installed it to.");
         return -1;
     }
 
     for (patch_index = 0; patch_index < 1000; patch_index++) {
-        sprintf(filename, "patch%03d.dat", patch_index);
+        snprintf(filename, sizeof(filename), "patch%03d.dat", patch_index);
 
-        if (access(filename, 0) == 0) {
+        if (compat_access(filename, 0) == 0) {
             dbOpen(filename, 0, NULL, 1);
         }
     }
 
-    _db_select(_master_db_handle);
+    if (compat_access("f2_res.dat", 0) == 0) {
+        dbOpen("f2_res.dat", 0, NULL, 1);
+    }
 
     return 0;
 }
@@ -1308,15 +1350,15 @@ static void showSplash()
     char path[64];
     const char* language = settings.system.language.c_str();
     if (compat_stricmp(language, ENGLISH) != 0) {
-        sprintf(path, "art\\%s\\splash\\", language);
+        snprintf(path, sizeof(path), "art\\%s\\splash\\", language);
     } else {
-        sprintf(path, "art\\splash\\");
+        snprintf(path, sizeof(path), "art\\splash\\");
     }
 
     File* stream;
     for (int index = 0; index < SPLASH_COUNT; index++) {
         char filePath[64];
-        sprintf(filePath, "%ssplash%d.rix", path, splash);
+        snprintf(filePath, sizeof(filePath), "%ssplash%d.rix", path, splash);
         stream = fileOpen(filePath, "rb");
         if (stream != NULL) {
             break;
@@ -1333,13 +1375,26 @@ static void showSplash()
         return;
     }
 
-    unsigned char* palette = (unsigned char*)internal_malloc(768);
+    unsigned char* palette = reinterpret_cast<unsigned char*>(internal_malloc(768));
     if (palette == NULL) {
         fileClose(stream);
         return;
     }
 
-    unsigned char* data = (unsigned char*)internal_malloc(SPLASH_WIDTH * SPLASH_HEIGHT);
+    int version;
+    fileReadInt32(stream, &version);
+    if (version != 'RIX3') {
+        fileClose(stream);
+        return;
+    }
+
+    short width;
+    fileRead(&width, sizeof(width), 1, stream);
+
+    short height;
+    fileRead(&height, sizeof(height), 1, stream);
+
+    unsigned char* data = reinterpret_cast<unsigned char*>(internal_malloc(width * height));
     if (data == NULL) {
         internal_free(palette);
         fileClose(stream);
@@ -1349,13 +1404,58 @@ static void showSplash()
     paletteSetEntries(gPaletteBlack);
     fileSeek(stream, 10, SEEK_SET);
     fileRead(palette, 1, 768, stream);
-    fileRead(data, 1, SPLASH_WIDTH * SPLASH_HEIGHT, stream);
+    fileRead(data, 1, width * height, stream);
     fileClose(stream);
 
-    int splashWindowX = (screenGetWidth() - SPLASH_WIDTH) / 2;
-    int splashWindowY = (screenGetHeight() - SPLASH_HEIGHT) / 2;
-    _scr_blit(data, SPLASH_WIDTH, SPLASH_HEIGHT, 0, 0, SPLASH_WIDTH, SPLASH_HEIGHT, splashWindowX, splashWindowY);
-    paletteFadeTo(palette);
+    int size = 0;
+
+    // TODO: Move to settings.
+    Config config;
+    if (configInit(&config)) {
+        if (configRead(&config, "f2_res.ini", false)) {
+            configGetInt(&config, "STATIC_SCREENS", "SPLASH_SCRN_SIZE", &size);
+        }
+
+        configFree(&config);
+    }
+
+    int screenWidth = screenGetWidth();
+    int screenHeight = screenGetHeight();
+
+    if (size != 0 || screenWidth < width || screenHeight < height) {
+        int scaledWidth;
+        int scaledHeight;
+
+        if (size == 2) {
+            scaledWidth = screenWidth;
+            scaledHeight = screenHeight;
+        } else {
+            if (screenHeight * width >= screenWidth * height) {
+                scaledWidth = screenWidth;
+                scaledHeight = screenWidth * height / width;
+            } else {
+                scaledWidth = screenHeight * width / height;
+                scaledHeight = screenHeight;
+            }
+        }
+
+        unsigned char* scaled = reinterpret_cast<unsigned char*>(internal_malloc(scaledWidth * scaledHeight));
+        if (scaled != NULL) {
+            blitBufferToBufferStretch(data, width, height, width, scaled, scaledWidth, scaledHeight, scaledWidth);
+
+            int x = screenWidth > scaledWidth ? (screenWidth - scaledWidth) / 2 : 0;
+            int y = screenHeight > scaledHeight ? (screenHeight - scaledHeight) / 2 : 0;
+            _scr_blit(scaled, scaledWidth, scaledHeight, 0, 0, scaledWidth, scaledHeight, x, y);
+            paletteFadeTo(palette);
+
+            internal_free(scaled);
+        }
+    } else {
+        int x = (screenWidth - width) / 2;
+        int y = (screenHeight - height) / 2;
+        _scr_blit(data, width, height, 0, 0, width, height, x, y);
+        paletteFadeTo(palette);
+    }
 
     internal_free(data);
     internal_free(palette);
@@ -1408,6 +1508,56 @@ int gameShowDeathDialog(const char* message)
     }
 
     return rc;
+}
+
+void* gameGetGlobalPointer(int var)
+{
+    if (var < 0 || var >= gGameGlobalVarsLength) {
+        debugPrint("ERROR: attempt to reference global pointer out of range: %d", var);
+        return nullptr;
+    }
+
+    return gGameGlobalPointers[var];
+}
+
+int gameSetGlobalPointer(int var, void* value)
+{
+    if (var < 0 || var >= gGameGlobalVarsLength) {
+        debugPrint("ERROR: attempt to reference global var out of range: %d", var);
+        return -1;
+    }
+
+    gGameGlobalPointers[var] = value;
+
+    return 0;
+}
+
+int GameMode::currentGameMode = 0;
+
+void GameMode::enterGameMode(int gameMode)
+{
+    currentGameMode |= gameMode;
+}
+
+void GameMode::exitGameMode(int gameMode)
+{
+    currentGameMode &= ~gameMode;
+}
+
+bool GameMode::isInGameMode(int gameMode)
+{
+    return (currentGameMode & gameMode) != 0;
+}
+
+ScopedGameMode::ScopedGameMode(int gameMode)
+{
+    this->gameMode = gameMode;
+    GameMode::enterGameMode(gameMode);
+}
+
+ScopedGameMode::~ScopedGameMode()
+{
+    GameMode::exitGameMode(gameMode);
 }
 
 } // namespace fallout

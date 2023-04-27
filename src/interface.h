@@ -33,14 +33,19 @@ typedef enum InterfaceItemAction {
 
 extern int gInterfaceBarWindow;
 extern bool gInterfaceBarMode;
+extern int gInterfaceBarWidth;
+extern bool gInterfaceBarIsCustom;
+extern int gInterfaceBarContentOffset;
+extern int gInterfaceSidePanelsImageId;
+extern bool gInterfaceSidePanelsExtendFromScreenEdge;
 
 int interfaceInit();
 void interfaceReset();
 void interfaceFree();
 int interfaceLoad(File* stream);
 int interfaceSave(File* stream);
-void intface_hide();
-void _intface_show();
+void interfaceBarHide();
+void interfaceBarShow();
 void interfaceBarEnable();
 void interfaceBarDisable();
 bool interfaceBarEnabled();
@@ -64,6 +69,9 @@ void interfaceBarEndButtonsRenderRedLights();
 int indicatorBarRefresh();
 bool indicatorBarShow();
 bool indicatorBarHide();
+bool interface_get_current_attack_mode(int* hit_mode);
+
+unsigned char* customInterfaceBarGetBackgroundImageData();
 
 } // namespace fallout
 

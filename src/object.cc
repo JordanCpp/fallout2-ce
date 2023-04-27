@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "animation.h"
 #include "art.h"
 #include "color.h"
@@ -29,7 +31,6 @@
 namespace fallout {
 
 static int objectLoadAllInternal(File* stream);
-static void _obj_fix_combat_cid_for_dude();
 static void _object_fix_weapon_ammo(Object* obj);
 static int objectWrite(Object* obj, File* stream);
 static int _obj_offset_table_init();
@@ -185,7 +186,7 @@ static int _obj_last_roof_y = -1;
 static int _obj_last_elev = -1;
 
 // 0x51977C
-static int _obj_last_is_empty = 1;
+static bool _obj_last_is_empty = true;
 
 // 0x519780
 unsigned char* _wallBlendTable = NULL;
@@ -337,8 +338,8 @@ int objectsInit(unsigned char* buf, int width, int height, int pitch)
     dudeFid = buildFid(OBJ_TYPE_CRITTER, _art_vault_guy_num, 0, 0, 0);
     objectCreateWithFidPid(&gDude, dudeFid, 0x1000000);
 
-    gDude->flags |= OBJECT_FLAG_0x400;
-    gDude->flags |= OBJECT_TEMPORARY;
+    gDude->flags |= OBJECT_NO_REMOVE;
+    gDude->flags |= OBJECT_NO_SAVE;
     gDude->flags |= OBJECT_HIDDEN;
     gDude->flags |= OBJECT_LIGHT_THRU;
     objectSetLight(gDude, 4, 0x10000, NULL);
@@ -350,8 +351,8 @@ int objectsInit(unsigned char* buf, int width, int height, int pitch)
 
     eggFid = buildFid(OBJ_TYPE_INTERFACE, 2, 0, 0, 0);
     objectCreateWithFidPid(&gEgg, eggFid, -1);
-    gEgg->flags |= OBJECT_FLAG_0x400;
-    gEgg->flags |= OBJECT_TEMPORARY;
+    gEgg->flags |= OBJECT_NO_REMOVE;
+    gEgg->flags |= OBJECT_NO_SAVE;
     gEgg->flags |= OBJECT_HIDDEN;
     gEgg->flags |= OBJECT_LIGHT_THRU;
 
@@ -378,7 +379,7 @@ void objectsReset()
         textObjectsReset();
         _obj_remove_all();
         memset(_obj_seen, 0, 5001);
-        lightResetIntensity();
+        lightReset();
     }
 }
 
@@ -386,8 +387,8 @@ void objectsReset()
 void objectsExit()
 {
     if (gObjectsInitialized) {
-        gDude->flags &= ~OBJECT_FLAG_0x400;
-        gEgg->flags &= ~OBJECT_FLAG_0x400;
+        gDude->flags &= ~OBJECT_NO_REMOVE;
+        gEgg->flags &= ~OBJECT_NO_REMOVE;
 
         _obj_remove_all();
         textObjectsFree();
@@ -395,7 +396,7 @@ void objectsExit()
         // NOTE: Uninline.
         _obj_blend_table_exit();
 
-        lightResetIntensity();
+        lightExit();
 
         // NOTE: Uninline.
         _obj_render_table_exit();
@@ -438,15 +439,15 @@ int objectRead(Object* obj, File* stream)
         return -1;
     }
 
-    if (obj->pid < 0x5000010 || obj->pid > 0x5000017) {
-        if (PID_TYPE(obj->pid) == 0 && !(gMapHeader.flags & 0x01)) {
-            _object_fix_weapon_ammo(obj);
-        }
-    } else {
+    if (isExitGridPid(obj->pid)) {
         if (obj->data.misc.map <= 0) {
             if ((obj->fid & 0xFFF) < 33) {
                 obj->fid = buildFid(OBJ_TYPE_MISC, (obj->fid & 0xFFF) + 16, FID_ANIM_TYPE(obj->fid), 0, 0);
             }
+        }
+    } else {
+        if (PID_TYPE(obj->pid) == 0 && !(gMapHeader.flags & 0x01)) {
+            _object_fix_weapon_ammo(obj);
         }
     }
 
@@ -541,8 +542,8 @@ static int objectLoadAllInternal(File* stream)
 
             _obj_insert(objectListNode);
 
-            if ((objectListNode->obj->flags & OBJECT_FLAG_0x400) && PID_TYPE(objectListNode->obj->pid) == OBJ_TYPE_CRITTER && objectListNode->obj->pid != 18000) {
-                objectListNode->obj->flags &= ~OBJECT_FLAG_0x400;
+            if ((objectListNode->obj->flags & OBJECT_NO_REMOVE) && PID_TYPE(objectListNode->obj->pid) == OBJ_TYPE_CRITTER && objectListNode->obj->pid != 18000) {
+                objectListNode->obj->flags &= ~OBJECT_NO_REMOVE;
             }
 
             Inventory* inventory = &(objectListNode->obj->data.inventory);
@@ -586,29 +587,6 @@ static int objectLoadAllInternal(File* stream)
     _obj_rebuild_all_light();
 
     return 0;
-}
-
-// 0x48909C
-static void _obj_fix_combat_cid_for_dude()
-{
-    Object** critterList;
-    int critterListLength = objectListCreate(-1, gElevation, OBJ_TYPE_CRITTER, &critterList);
-
-    if (gDude->data.critter.combat.whoHitMeCid == -1) {
-        gDude->data.critter.combat.whoHitMe = NULL;
-    } else {
-        int index = _find_cid(0, gDude->data.critter.combat.whoHitMeCid, critterList, critterListLength);
-        if (index != critterListLength) {
-            gDude->data.critter.combat.whoHitMe = critterList[index];
-        } else {
-            gDude->data.critter.combat.whoHitMe = NULL;
-        }
-    }
-
-    if (critterListLength != 0) {
-        // NOTE: Uninline.
-        objectListFree(critterList);
-    }
 }
 
 // Fixes ammo pid and number of charges.
@@ -714,7 +692,7 @@ int objectSaveAll(File* stream)
                     continue;
                 }
 
-                if ((object->flags & OBJECT_TEMPORARY) != 0) {
+                if ((object->flags & OBJECT_NO_SAVE) != 0) {
                     continue;
                 }
 
@@ -785,60 +763,31 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
         return;
     }
 
-    int ambientLight = lightGetLightLevel();
+    int ambientIntensity = lightGetAmbientIntensity();
     int minX = updatedRect.left - 320;
     int minY = updatedRect.top - 240;
     int maxX = updatedRect.right + 320;
     int maxY = updatedRect.bottom + 240;
-    int topLeftTile = tileFromScreenXY(minX, minY, elevation);
+    int upperLeftTile = tileFromScreenXY(minX, minY, elevation, true);
     int updateAreaHexWidth = (maxX - minX + 1) / 32;
     int updateAreaHexHeight = (maxY - minY + 1) / 12;
-
-    // On some maps (which were designed too close to edges) HRP brings a new
-    // problem - extended update rect (+/- 320/240 stuff above) may end up
-    // outside of the map edge. In this case `topLeftTile` will be -1 which
-    // affect all subsequent calculations. In order to fix that attempt to
-    // find closest valid tile.
-    while (!hexGridTileIsValid(topLeftTile)) {
-        minX += 32;
-        minY += 12;
-        topLeftTile = tileFromScreenXY(minX, minY, elevation);
-    }
-
-    // Do the same for the for bottom-right part of the extended update rect.
-    int bottomRightTile = tileFromScreenXY(maxX, maxY, elevation);
-    while (!hexGridTileIsValid(bottomRightTile)) {
-        maxX -= 32;
-        maxY -= 12;
-        bottomRightTile = tileFromScreenXY(maxX, maxY, elevation);
-    }
-
-    updateAreaHexWidth = (maxX - minX + 1) / 32;
-    updateAreaHexHeight = (maxY - minY + 1) / 12;
-
     int parity = gCenterTile & 1;
-    int* orders = _orderTable[parity];
-    int* offsets = _offsetTable[parity];
 
     _outlineCount = 0;
 
     int renderCount = 0;
     for (int i = 0; i < gObjectsUpdateAreaHexSize; i++) {
-        int offsetIndex = *orders++;
+        int offsetIndex = _orderTable[parity][i];
         if (updateAreaHexHeight > _offsetDivTable[offsetIndex] && updateAreaHexWidth > _offsetModTable[offsetIndex]) {
-            int light;
-
-            ObjectListNode* objectListNode = hexGridTileIsValid(topLeftTile + offsets[offsetIndex])
-                ? gObjectListHeadByTile[topLeftTile + offsets[offsetIndex]]
+            int tile = upperLeftTile + _offsetTable[parity][offsetIndex];
+            ObjectListNode* objectListNode = hexGridTileIsValid(tile)
+                ? gObjectListHeadByTile[tile]
                 : NULL;
+
+            int lightIntensity;
             if (objectListNode != NULL) {
-                // NOTE: calls _light_get_tile two times, probably result of min/max macro
-                int tileLight = _light_get_tile(elevation, objectListNode->obj->tile);
-                if (tileLight >= ambientLight) {
-                    light = tileLight;
-                } else {
-                    light = ambientLight;
-                }
+                // NOTE: Calls `lightGetTileIntensity` twice.
+                lightIntensity = std::max(ambientIntensity, lightGetTileIntensity(elevation, objectListNode->obj->tile));
             }
 
             while (objectListNode != NULL) {
@@ -852,7 +801,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
                     }
 
                     if ((objectListNode->obj->flags & OBJECT_HIDDEN) == 0) {
-                        _obj_render_object(objectListNode->obj, &updatedRect, light);
+                        _obj_render_object(objectListNode->obj, &updatedRect, lightIntensity);
 
                         if ((objectListNode->obj->outline & OUTLINE_TYPE_MASK) != 0) {
                             if ((objectListNode->obj->outline & OUTLINE_DISABLED) == 0 && _outlineCount < 100) {
@@ -872,17 +821,12 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
     }
 
     for (int i = 0; i < renderCount; i++) {
-        int light;
+        int lightIntensity;
 
         ObjectListNode* objectListNode = _renderTable[i];
         if (objectListNode != NULL) {
-            // NOTE: calls _light_get_tile two times, probably result of min/max macro
-            int tileLight = _light_get_tile(elevation, objectListNode->obj->tile);
-            if (tileLight >= ambientLight) {
-                light = tileLight;
-            } else {
-                light = ambientLight;
-            }
+            // NOTE: Calls `lightGetTileIntensity` twice.
+            lightIntensity = std::max(ambientIntensity, lightGetTileIntensity(elevation, objectListNode->obj->tile));
         }
 
         while (objectListNode != NULL) {
@@ -893,7 +837,7 @@ void _obj_render_pre_roof(Rect* rect, int elevation)
 
             if (elevation == objectListNode->obj->elevation) {
                 if ((objectListNode->obj->flags & OBJECT_HIDDEN) == 0) {
-                    _obj_render_object(object, &updatedRect, light);
+                    _obj_render_object(object, &updatedRect, lightIntensity);
 
                     if ((objectListNode->obj->outline & OUTLINE_TYPE_MASK) != 0) {
                         if ((objectListNode->obj->outline & OUTLINE_DISABLED) == 0 && _outlineCount < 100) {
@@ -1469,7 +1413,7 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
 
             if (elevation == elev) {
                 if (FID_TYPE(obj->fid) == OBJ_TYPE_MISC) {
-                    if (obj->pid >= 0x5000010 && obj->pid <= 0x5000017) {
+                    if (isExitGridPid(obj->pid)) {
                         ObjectData* data = &(obj->data);
 
                         MapTransition transition;
@@ -1492,21 +1436,24 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
         // NOTE: Uninline.
         obj_set_seen(tile);
 
-        int v14 = tile % 200 / 2;
-        int v15 = tile / 200 / 2;
-        if (v14 != _obj_last_roof_x || v15 != _obj_last_roof_y || elevation != _obj_last_elev) {
-            int v16 = _square[elevation]->field_0[v14 + 100 * v15];
-            int v31 = buildFid(OBJ_TYPE_TILE, (v16 >> 16) & 0xFFF, 0, 0, 0);
-            int v32 = _square[elevation]->field_0[_obj_last_roof_x + 100 * _obj_last_roof_y];
-            int v34 = buildFid(OBJ_TYPE_TILE, 1, 0, 0, 0) == v31;
+        int roofX = tile % 200 / 2;
+        int roofY = tile / 200 / 2;
+        if (roofX != _obj_last_roof_x || roofY != _obj_last_roof_y || elevation != _obj_last_elev) {
+            int currentSquare = _square[elevation]->field_0[roofX + 100 * roofY];
+            int currentSquareFid = buildFid(OBJ_TYPE_TILE, (currentSquare >> 16) & 0xFFF, 0, 0, 0);
+            // CE: Add additional checks for -1 to prevent array lookup at index -101.
+            int previousSquare = _obj_last_roof_x != -1 && _obj_last_roof_y != -1
+                ? _square[elevation]->field_0[_obj_last_roof_x + 100 * _obj_last_roof_y]
+                : 0;
+            bool isEmpty = buildFid(OBJ_TYPE_TILE, 1, 0, 0, 0) == currentSquareFid;
 
-            if (v34 != _obj_last_is_empty || (((v16 >> 16) & 0xF000) >> 12) != (((v32 >> 16) & 0xF000) >> 12)) {
-                if (_obj_last_is_empty == 0) {
-                    _tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, elevation, 1);
+            if (isEmpty != _obj_last_is_empty || (((currentSquare >> 16) & 0xF000) >> 12) != (((previousSquare >> 16) & 0xF000) >> 12)) {
+                if (!_obj_last_is_empty) {
+                    tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, elevation, true);
                 }
 
-                if (v34 == 0) {
-                    _tile_fill_roof(v14, v15, elevation, 0);
+                if (!isEmpty) {
+                    tile_fill_roof(roofX, roofY, elevation, false);
                 }
 
                 if (rect != NULL) {
@@ -1514,10 +1461,10 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
                 }
             }
 
-            _obj_last_roof_x = v14;
-            _obj_last_roof_y = v15;
+            _obj_last_roof_x = roofX;
+            _obj_last_roof_y = roofY;
             _obj_last_elev = elevation;
-            _obj_last_is_empty = v34;
+            _obj_last_is_empty = isEmpty;
         }
 
         if (rect != NULL) {
@@ -1530,7 +1477,7 @@ int objectSetLocation(Object* obj, int tile, int elevation, Rect* rect)
 
         if (elevation != oldElevation) {
             mapSetElevation(elevation);
-            tileSetCenter(tile, TILE_SET_CENTER_FLAG_0x01 | TILE_SET_CENTER_FLAG_0x02);
+            tileSetCenter(tile, TILE_SET_CENTER_REFRESH_WINDOW | TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS);
             if (isInCombat()) {
                 _game_user_wants_to_quit = 1;
             }
@@ -1549,7 +1496,7 @@ int _obj_reset_roof()
 {
     int fid = buildFid(OBJ_TYPE_TILE, (_square[gDude->elevation]->field_0[_obj_last_roof_x + 100 * _obj_last_roof_y] >> 16) & 0xFFF, 0, 0, 0);
     if (fid != buildFid(OBJ_TYPE_TILE, 1, 0, 0, 0)) {
-        _tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, gDude->elevation, 1);
+        tile_fill_roof(_obj_last_roof_x, _obj_last_roof_y, gDude->elevation, 1);
     }
     return 0;
 }
@@ -1750,7 +1697,7 @@ int objectRotateCounterClockwise(Object* obj, Rect* dirtyRect)
 // 0x48AC54
 void _obj_rebuild_all_light()
 {
-    lightResetIntensity();
+    lightResetTileIntensity();
 
     for (int tile = 0; tile < HEX_GRID_SIZE; tile++) {
         ObjectListNode* objectListNode = gObjectListHeadByTile[tile];
@@ -1764,55 +1711,49 @@ void _obj_rebuild_all_light()
 // 0x48AC90
 int objectSetLight(Object* obj, int lightDistance, int lightIntensity, Rect* rect)
 {
-    int v7;
-    Rect new_rect;
-
     if (obj == NULL) {
         return -1;
     }
 
-    v7 = _obj_turn_off_light(obj, rect);
+    int rc = _obj_turn_off_light(obj, rect);
     if (lightIntensity > 0) {
-        if (lightDistance >= 8) {
-            lightDistance = 8;
-        }
-
+        obj->lightDistance = std::min(lightDistance, 8);
         obj->lightIntensity = lightIntensity;
-        obj->lightDistance = lightDistance;
 
         if (rect != NULL) {
-            v7 = _obj_turn_on_light(obj, &new_rect);
-            rectUnion(rect, &new_rect, rect);
+            Rect tempRect;
+            rc = _obj_turn_on_light(obj, &tempRect);
+            rectUnion(rect, &tempRect, rect);
         } else {
-            v7 = _obj_turn_on_light(obj, NULL);
+            rc = _obj_turn_on_light(obj, NULL);
         }
     } else {
         obj->lightIntensity = 0;
         obj->lightDistance = 0;
     }
 
-    return v7;
+    return rc;
 }
 
 // 0x48AD04
 int objectGetLightIntensity(Object* obj)
 {
-    int lightLevel = lightGetLightLevel();
-    int lightIntensity = lightGetIntensity(obj->elevation, obj->tile);
+    int ambientIntensity = lightGetAmbientIntensity();
+    int tileIntensity = lightGetTrueTileIntensity(obj->elevation, obj->tile);
 
     if (obj == gDude) {
-        lightIntensity -= gDude->lightIntensity;
+        tileIntensity -= gDude->lightIntensity;
     }
 
-    if (lightIntensity >= lightLevel) {
-        if (lightIntensity > 0x10000) {
-            lightIntensity = 0x10000;
+    if (tileIntensity >= ambientIntensity) {
+        if (tileIntensity > LIGHT_INTENSITY_MAX) {
+            tileIntensity = LIGHT_INTENSITY_MAX;
         }
     } else {
-        lightIntensity = lightLevel;
+        tileIntensity = ambientIntensity;
     }
 
-    return lightIntensity;
+    return tileIntensity;
 }
 
 // 0x48AD48
@@ -2068,7 +2009,7 @@ int _obj_inven_free(Inventory* inventory)
         objectListNodeCreate(&node);
 
         node->obj = inventoryItem->item;
-        node->obj->flags &= ~OBJECT_FLAG_0x400;
+        node->obj->flags &= ~OBJECT_NO_REMOVE;
         _obj_remove(node, node);
 
         inventoryItem->item = NULL;
@@ -2183,7 +2124,7 @@ void _obj_remove_all()
 
     _obj_last_roof_y = -1;
     _obj_last_elev = -1;
-    _obj_last_is_empty = 1;
+    _obj_last_is_empty = true;
     _obj_last_roof_x = -1;
 }
 
@@ -2803,26 +2744,24 @@ void _translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeig
 }
 
 // 0x48BEFC
-void _dark_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int light)
+void _dark_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int intensity)
 {
     unsigned char* sp = src;
     unsigned char* dp = dest + destPitch * destY + destX;
 
     int srcStep = srcPitch - srcWidth;
     int destStep = destPitch - srcWidth;
-    // TODO: Name might be confusing.
-    int lightModifier = light >> 9;
+    int intensityIndex = intensity / 512;
 
     for (int y = 0; y < srcHeight; y++) {
         for (int x = 0; x < srcWidth; x++) {
-            unsigned char b = *sp;
-            if (b != 0) {
-                if (b < 0xE5) {
-                    int t = (b << 8) + lightModifier;
-                    b = _intensityColorTable[t];
+            unsigned char color = *sp;
+            if (color != 0) {
+                if (color < 0xE5) {
+                    color = intensityColorTable[color][intensityIndex];
                 }
 
-                *dp = b;
+                *dp = color;
             }
 
             sp++;
@@ -2835,11 +2774,11 @@ void _dark_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int
 }
 
 // 0x48BF88
-void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int light, unsigned char* a10, unsigned char* a11)
+void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destX, int destY, int destPitch, int intensity, unsigned char* a10, unsigned char* a11)
 {
     int srcStep = srcPitch - srcWidth;
     int destStep = destPitch - srcWidth;
-    int lightModifier = light >> 9;
+    int intensityIndex = intensity / 512;
 
     dest += destPitch * destY + destX;
 
@@ -2850,9 +2789,7 @@ void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int sr
                 unsigned char destByte = *dest;
                 unsigned int index = a11[srcByte] << 8;
                 index = a10[index + destByte];
-                index <<= 8;
-                index += lightModifier;
-                *dest = _intensityColorTable[index];
+                *dest = intensityColorTable[index][intensityIndex];
             }
 
             src++;
@@ -2865,32 +2802,24 @@ void _dark_translucent_trans_buf_to_buf(unsigned char* src, int srcWidth, int sr
 }
 
 // 0x48C03C
-void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destPitch, unsigned char* mask, int maskPitch, int light)
+void _intensity_mask_buf_to_buf(unsigned char* src, int srcWidth, int srcHeight, int srcPitch, unsigned char* dest, int destPitch, unsigned char* mask, int maskPitch, int intensity)
 {
     int srcStep = srcPitch - srcWidth;
     int destStep = destPitch - srcWidth;
     int maskStep = maskPitch - srcWidth;
-    light >>= 9;
+    int intensityIndex = intensity / 512;
 
     for (int y = 0; y < srcHeight; y++) {
         for (int x = 0; x < srcWidth; x++) {
-            unsigned char b = *src;
-            if (b != 0) {
-                int off = (b << 8) + light;
-                b = _intensityColorTable[off];
-                unsigned char m = *mask;
-                if (m != 0) {
-                    unsigned char d = *dest;
-                    int off = (d << 8) + 128 - m;
-                    int q = _intensityColorTable[off];
-
-                    off = (b << 8) + m;
-                    m = _intensityColorTable[off];
-
-                    off = (m << 8) + q;
-                    b = _colorMixAddTable[off];
+            unsigned char color = *src;
+            if (color != 0) {
+                color = intensityColorTable[color][intensityIndex];
+                if (*mask != 0) {
+                    unsigned char v1 = intensityColorTable[*dest][128 - *mask];
+                    unsigned char v2 = intensityColorTable[color][*mask];
+                    color = colorMixAddTable[v2][v1];
                 }
-                *dest = b;
+                *dest = color;
             }
 
             src++;
@@ -3042,7 +2971,7 @@ int _obj_intersects_with(Object* object, int x, int y)
 // 0x48C5C4
 int _obj_create_intersect_list(int x, int y, int elevation, int objectType, ObjectWithFlags** entriesPtr)
 {
-    int v5 = tileFromScreenXY(x - 320, y - 240, elevation);
+    int upperLeftTile = tileFromScreenXY(x - 320, y - 240, elevation, true);
     *entriesPtr = NULL;
 
     if (gObjectsUpdateAreaHexSize <= 0) {
@@ -3053,9 +2982,12 @@ int _obj_create_intersect_list(int x, int y, int elevation, int objectType, Obje
 
     int parity = gCenterTile & 1;
     for (int index = 0; index < gObjectsUpdateAreaHexSize; index++) {
-        int v7 = _orderTable[parity][index];
-        if (_offsetDivTable[v7] < 30 && _offsetModTable[v7] < 20) {
-            ObjectListNode* objectListNode = gObjectListHeadByTile[_offsetTable[parity][v7] + v5];
+        int offsetIndex = _orderTable[parity][index];
+        if (_offsetDivTable[offsetIndex] < 30 && _offsetModTable[offsetIndex] < 20) {
+            int tile = _offsetTable[parity][offsetIndex] + upperLeftTile;
+            ObjectListNode* objectListNode = hexGridTileIsValid(tile)
+                ? gObjectListHeadByTile[tile]
+                : NULL;
             while (objectListNode != NULL) {
                 Object* object = objectListNode->obj;
                 if (object->elevation > elevation) {
@@ -3335,7 +3267,7 @@ static int _obj_offset_table_init()
             }
         }
 
-        if (tileSetCenter(gCenterTile + 1, 2) == -1) {
+        if (tileSetCenter(gCenterTile + 1, TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS) == -1) {
             goto err;
         }
     }
@@ -3512,9 +3444,9 @@ static void _obj_light_table_init()
 static void _obj_blend_table_init()
 {
     for (int index = 0; index < 256; index++) {
-        int r = (_Color2RGB_(index) & 0x7C00) >> 10;
-        int g = (_Color2RGB_(index) & 0x3E0) >> 5;
-        int b = _Color2RGB_(index) & 0x1F;
+        int r = (Color2RGB(index) & 0x7C00) >> 10;
+        int g = (Color2RGB(index) & 0x3E0) >> 5;
+        int b = Color2RGB(index) & 0x1F;
         _glassGrayTable[index] = ((r + 5 * g + 4 * b) / 10) >> 2;
         _commonGrayTable[index] = ((b + 3 * r + 6 * g) / 10) >> 2;
     }
@@ -3544,7 +3476,7 @@ static void _obj_blend_table_exit()
 // 0x48D348
 static int _obj_save_obj(File* stream, Object* object)
 {
-    if ((object->flags & OBJECT_TEMPORARY) != 0) {
+    if ((object->flags & OBJECT_NO_SAVE) != 0) {
         return 0;
     }
 
@@ -3582,7 +3514,7 @@ static int _obj_save_obj(File* stream, Object* object)
             return -1;
         }
 
-        if ((inventoryItem->item->flags & OBJECT_TEMPORARY) != 0) {
+        if ((inventoryItem->item->flags & OBJECT_NO_SAVE) != 0) {
             return -1;
         }
     }
@@ -3666,13 +3598,13 @@ int _obj_save_dude(File* stream)
 {
     int field_78 = gDude->sid;
 
-    gDude->flags &= ~OBJECT_TEMPORARY;
+    gDude->flags &= ~OBJECT_NO_SAVE;
     gDude->sid = -1;
 
     int rc = _obj_save_obj(stream, gDude);
 
     gDude->sid = field_78;
-    gDude->flags |= OBJECT_TEMPORARY;
+    gDude->flags |= OBJECT_NO_SAVE;
 
     if (fileWriteInt32(stream, gCenterTile) == -1) {
         fileClose(stream);
@@ -3698,7 +3630,7 @@ int _obj_load_dude(File* stream)
 
     memcpy(gDude, temp, sizeof(*gDude));
 
-    gDude->flags |= OBJECT_TEMPORARY;
+    gDude->flags |= OBJECT_NO_SAVE;
 
     scriptsClearDudeScript();
 
@@ -3729,8 +3661,6 @@ int _obj_load_dude(File* stream)
         inventoryItem->item->owner = gDude;
     }
 
-    _obj_fix_combat_cid_for_dude();
-
     // Dude has claimed ownership of items in temporary instance's inventory.
     // We don't need object's dealloc routine to remove these items from the
     // game, so simply nullify temporary inventory as if nothing was there.
@@ -3739,7 +3669,7 @@ int _obj_load_dude(File* stream)
     tempInventory->capacity = 0;
     tempInventory->items = NULL;
 
-    temp->flags &= ~OBJECT_FLAG_0x400;
+    temp->flags &= ~OBJECT_NO_REMOVE;
 
     if (objectDestroy(temp, NULL) == -1) {
         debugPrint("\nError: obj_load_dude: Can't destroy temp object!\n");
@@ -3753,7 +3683,7 @@ int _obj_load_dude(File* stream)
         return -1;
     }
 
-    tileSetCenter(tile, TILE_SET_CENTER_FLAG_0x01 | TILE_SET_CENTER_FLAG_0x02);
+    tileSetCenter(tile, TILE_SET_CENTER_REFRESH_WINDOW | TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS);
 
     return rc;
 }
@@ -3954,7 +3884,7 @@ static int _obj_remove(ObjectListNode* a1, ObjectListNode* a2)
         return -1;
     }
 
-    if ((a1->obj->flags & OBJECT_FLAG_0x400) != 0) {
+    if ((a1->obj->flags & OBJECT_NO_REMOVE) != 0) {
         return -1;
     }
 
@@ -4042,7 +3972,7 @@ static int _obj_adjust_light(Object* obj, int a2, Rect* rect)
         return -1;
     }
 
-    AdjustLightIntensityProc* adjustLightIntensity = a2 ? lightDecreaseIntensity : lightIncreaseIntensity;
+    AdjustLightIntensityProc* adjustLightIntensity = a2 ? lightDecreaseTileIntensity : lightIncreaseTileIntensity;
     adjustLightIntensity(obj->elevation, obj->tile, obj->lightIntensity);
 
     Rect objectRect;
@@ -5238,6 +5168,24 @@ Object* objectTypedFindById(int id, int type)
     }
 
     return NULL;
+}
+
+bool isExitGridAt(int tile, int elevation)
+{
+    ObjectListNode* objectListNode = gObjectListHeadByTile[tile];
+    while (objectListNode != NULL) {
+        Object* obj = objectListNode->obj;
+        if (obj->elevation == elevation) {
+            if ((obj->flags & OBJECT_HIDDEN) == 0) {
+                if (isExitGridPid(obj->pid)) {
+                    return true;
+                }
+            }
+        }
+        objectListNode = objectListNode->next;
+    }
+
+    return false;
 }
 
 } // namespace fallout

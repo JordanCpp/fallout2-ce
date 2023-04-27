@@ -104,6 +104,7 @@ extern char* _proto_none_str;
 
 void _proto_make_path(char* path, int pid);
 int _proto_list_str(int pid, char* proto_path);
+size_t proto_size(int type);
 bool _proto_action_can_use(int pid);
 bool _proto_action_can_use_on(int pid);
 bool _proto_action_can_talk_to(int pid);
@@ -125,6 +126,11 @@ int _proto_save_pid(int pid);
 void _proto_remove_all();
 int protoGetProto(int pid, Proto** out_proto);
 int _ResetPlayer();
+
+static bool isExitGridPid(int pid)
+{
+    return pid >= FIRST_EXIT_GRID_PID && pid <= LAST_EXIT_GRID_PID;
+}
 
 } // namespace fallout
 

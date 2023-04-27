@@ -58,6 +58,7 @@ int _combat_explode_scenery(Object* a1, Object* a2);
 void _combat_delete_critter(Object* obj);
 void _combatKillCritterOutsideCombat(Object* critter_obj, char* msg);
 
+int combatGetTargetHighlight();
 int criticalsGetValue(int killType, int hitLocation, int effect, int dataMember);
 void criticalsSetValue(int killType, int hitLocation, int effect, int dataMember, int value);
 void criticalsResetValue(int killType, int hitLocation, int effect, int dataMember);
@@ -70,6 +71,9 @@ int unarmedGetKickHitMode(bool isSecondary);
 bool unarmedIsPenetrating(int hitMode);
 bool damageModGetBonusHthDamageFix();
 bool damageModGetDisplayBonusDamage();
+int combat_get_hit_location_penalty(int hit_location);
+void combat_set_hit_location_penalty(int hit_location, int penalty);
+void combat_reset_hit_location_penalty();
 
 static inline bool isInCombat()
 {

@@ -5,10 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#endif
+#include <SDL.h>
 
 #include "memory.h"
 #include "platform_compat.h"
@@ -143,18 +140,12 @@ int debugPrint(const char* format, ...)
 
     if (gDebugPrintProc != NULL) {
         char string[260];
-        vsprintf(string, format, args);
+        vsnprintf(string, sizeof(string), format, args);
 
         rc = gDebugPrintProc(string);
     } else {
 #ifdef _DEBUG
-        char string[260];
-        vsprintf(string, format, args);
-#ifdef _WIN32
-        OutputDebugStringA(string);
-#else
-        printf("%s", string);
-#endif
+        SDL_LogMessageV(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, format, args);
 #endif
         rc = -1;
     }

@@ -63,18 +63,6 @@ int dbOpen(const char* filePath1, int a2, const char* filePath2, int a4)
     return 0;
 }
 
-// 0x4C5D54
-int _db_select(int dbHandle)
-{
-    return 0;
-}
-
-// NOTE: Uncollapsed 0x4C5D54.
-int _db_current()
-{
-    return 0;
-}
-
 // 0x4C5D58
 int _db_total()
 {
@@ -338,7 +326,7 @@ int fileReadInt32(File* stream, int* valuePtr)
         return -1;
     }
 
-    *valuePtr = ((value >> 24) & 0xFF) | ((value >> 8) & 0xFF00) | ((value << 8) & 0xFF0000) | ((value << 24) & 0xFF000000);
+    *valuePtr = ((value & 0xFF000000) >> 24) | ((value & 0xFF0000) >> 8) | ((value & 0xFF00) << 8) | ((value & 0xFF) << 24);
 
     return 0;
 }
@@ -511,7 +499,7 @@ int fileReadInt32List(File* stream, int* arr, int count)
 
     for (int index = 0; index < count; index++) {
         int value = arr[index];
-        arr[index] = ((value >> 24) & 0xFF) | ((value >> 8) & 0xFF00) | ((value << 8) & 0xFF0000) | ((value << 24) & 0xFF000000);
+        arr[index] = ((value & 0xFF000000) >> 24) | ((value & 0xFF0000) >> 8) | ((value & 0xFF00) << 8) | ((value & 0xFF) << 24);
     }
 
     return 0;
@@ -645,17 +633,18 @@ int fileNameListInit(const char* pattern, char*** fileNameListPtr, int a3, int a
         bool isWildcard = *pattern == '*';
 
         for (int index = 0; index < fileNamesLength; index += 1) {
-            const char* name = xlist->fileNames[index];
+            char* name = xlist->fileNames[index];
             char dir[COMPAT_MAX_DIR];
             char fileName[COMPAT_MAX_FNAME];
             char extension[COMPAT_MAX_EXT];
+            compat_windows_path_to_native(name);
             compat_splitpath(name, NULL, dir, fileName, extension);
 
-            if (!isWildcard || *dir == '\0' || strchr(dir, '\\') == NULL) {
+            if (!isWildcard || *dir == '\0' || (strchr(dir, '\\') == NULL && strchr(dir, '/') == NULL)) {
                 // NOTE: Quick and dirty fix to buffer overflow. See RE to
                 // understand the problem.
                 char path[COMPAT_MAX_PATH];
-                sprintf(path, "%s%s", fileName, extension);
+                snprintf(path, sizeof(path), "%s%s", fileName, extension);
                 free(xlist->fileNames[length]);
                 xlist->fileNames[length] = compat_strdup(path);
                 length++;
@@ -699,14 +688,6 @@ void fileNameListFree(char*** fileNameListPtr, int a2)
     free(currentFileList);
 }
 
-// NOTE: This function does nothing. It was probably used to set memory procs
-// for building file name list.
-//
-// 0x4C68B8
-void _db_register_mem(MallocProc* mallocProc, StrdupProc* strdupProc, FreeProc* freeProc)
-{
-}
-
 // TODO: Return type should be long.
 //
 // 0x4C68BC
@@ -725,14 +706,6 @@ void fileSetReadProgressHandler(FileReadProgressHandler* handler, int size)
         gFileReadProgressHandler = NULL;
         gFileReadProgressChunkSize = 0;
     }
-}
-
-// NOTE: This function is called when fallout2.cfg has "hashing" enabled, but
-// it does nothing. It's impossible to guess it's name.
-//
-// 0x4C68E4
-void _db_enable_hash_table_()
-{
 }
 
 // 0x4C68E8

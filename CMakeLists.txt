@@ -83,8 +83,6 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/display_monitor.h"
     "src/draw.cc"
     "src/draw.h"
-    "src/electronic_registration.cc"
-    "src/electronic_registration.h"
     "src/elevator.cc"
     "src/elevator.h"
     "src/endgame.cc"
@@ -107,8 +105,6 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/game_mouse.h"
     "src/game_movie.cc"
     "src/game_movie.h"
-    "src/game_palette.cc"
-    "src/game_palette.h"
     "src/game_sound.cc"
     "src/game_sound.h"
     "src/game_vars.h"
@@ -118,8 +114,6 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/geometry.h"
     "src/graph_lib.cc"
     "src/graph_lib.h"
-    "src/grayscale.cc"
-    "src/grayscale.h"
     "src/heap.cc"
     "src/heap.h"
     "src/input.cc"
@@ -146,6 +140,8 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/loadsave.h"
     "src/main.cc"
     "src/main.h"
+    "src/mainmenu.cc"
+    "src/mainmenu.h"
     "src/map_defs.h"
     "src/map.cc"
     "src/map.h"
@@ -156,8 +152,6 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/memory.h"
     "src/message.cc"
     "src/message.h"
-    "src/mmx.cc"
-    "src/mmx.h"
     "src/mouse_manager.cc"
     "src/mouse_manager.h"
     "src/mouse.cc"
@@ -265,10 +259,18 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/platform_compat.h"
     "src/pointer_registry.cc"
     "src/pointer_registry.h"
+    "src/preferences.cc"
+    "src/preferences.h"
     "src/settings.cc"
     "src/settings.h"
     "src/sfall_config.cc"
     "src/sfall_config.h"
+    "src/sfall_global_vars.cc"
+    "src/sfall_global_vars.h"
+    "src/sfall_lists.cc"
+    "src/sfall_lists.h"
+    "src/sfall_opcodes.cc"
+    "src/sfall_opcodes.h"
 )
 
 if(IOS)
@@ -282,11 +284,8 @@ if(WIN32)
     target_compile_definitions(${EXECUTABLE_NAME} PUBLIC
         _CRT_SECURE_NO_WARNINGS
         _CRT_NONSTDC_NO_WARNINGS
-    )
-else()
-    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE
-        $<$<CONFIG:Debug>:_DEBUG>
-        $<$<CONFIG:RelWithDebInfo>:_DEBUG>
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
     )
 endif()
 
@@ -304,24 +303,33 @@ if (WIN32)
 endif()
 
 if(APPLE)
-    target_sources(${EXECUTABLE_NAME} PUBLIC "os/macos/fallout2-ce.icns")
-    set_source_files_properties("os/macos/fallout2-ce.icns" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-
     if(IOS)
-        target_sources(${EXECUTABLE_NAME} PUBLIC "os/ios/LaunchScreen.storyboard")
-        set_source_files_properties("os/ios/LaunchScreen.storyboard" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-        set_target_properties(${EXECUTABLE_NAME} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/os/ios/Info.plist")
-        set_target_properties(${EXECUTABLE_NAME} PROPERTIES XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
+        set(RESOURCES
+            "os/ios/AppIcon.xcassets"
+            "os/ios/LaunchScreen.storyboard"
+        )
+
+        target_sources(${EXECUTABLE_NAME} PUBLIC ${RESOURCES})
+        set_source_files_properties(${RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+
+        set_target_properties(${EXECUTABLE_NAME} PROPERTIES
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/os/ios/Info.plist"
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.alexbatalov.fallout2-ce"
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        )
     else()
         set_target_properties(${EXECUTABLE_NAME} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/os/macos/Info.plist")
+        target_sources(${EXECUTABLE_NAME} PUBLIC "os/macos/fallout2-ce.icns")
+        set_source_files_properties("os/macos/fallout2-ce.icns" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        set(MACOSX_BUNDLE_ICON_FILE "fallout2-ce.icns")
     endif()
 
     set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.alexbatalov.fallout2-ce")
     set(MACOSX_BUNDLE_BUNDLE_NAME "${EXECUTABLE_NAME}")
-    set(MACOSX_BUNDLE_ICON_FILE "fallout2-ce.icns")
     set(MACOSX_BUNDLE_DISPLAY_NAME "Fallout 2")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.1.0")
-    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.1.0")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "1.2.0")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION "1.2.0")
 endif()
 
 add_subdirectory("third_party/fpattern")
@@ -349,6 +357,7 @@ if(APPLE)
         set(CPACK_GENERATOR "ZIP")
         set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
         set(CPACK_PACKAGE_FILE_NAME "fallout2-ce")
+        set(CPACK_ARCHIVE_FILE_EXTENSION "ipa")
     else()
         install(TARGETS ${EXECUTABLE_NAME} DESTINATION .)
         install(CODE "

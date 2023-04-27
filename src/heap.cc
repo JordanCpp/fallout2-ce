@@ -73,7 +73,7 @@ typedef struct HeapMoveableExtent {
 static bool heapInternalsInit();
 static void heapInternalsFree();
 static bool heapHandleListInit(Heap* heap);
-static bool heapPrintStats(Heap* heap, char* dest);
+static bool heapPrintStats(Heap* heap, char* dest, size_t size);
 static bool heapFindFreeHandle(Heap* heap, int* handleIndexPtr);
 static bool heapFindFreeBlock(Heap* heap, int size, void** blockPtr, int a4);
 static int heapBlockCompareBySize(const void* a1, const void* a2);
@@ -306,6 +306,8 @@ bool heapBlockAllocate(Heap* heap, int* handleIndexPtr, int size, int a4)
     int state;
     int blockSize;
     HeapHandle* handle;
+
+    size += 4 - size % 4;
 
     if (heap == NULL || handleIndexPtr == NULL || size == 0) {
         goto err;
@@ -599,7 +601,7 @@ bool heapUnlock(Heap* heap, int handleIndex)
 }
 
 // 0x4532AC
-static bool heapPrintStats(Heap* heap, char* dest)
+static bool heapPrintStats(Heap* heap, char* dest, size_t size)
 {
     if (heap == NULL || dest == NULL) {
         return false;
@@ -617,7 +619,7 @@ static bool heapPrintStats(Heap* heap, char* dest)
                          "Total handles: %d\n"
                          "Total heaps: %d";
 
-    sprintf(dest, format,
+    snprintf(dest, size, format,
         heap->freeBlocks,
         heap->freeSize,
         heap->moveableBlocks,
@@ -912,7 +914,7 @@ system:
 
     if (1) {
         char stats[512];
-        if (heapPrintStats(heap, stats)) {
+        if (heapPrintStats(heap, stats, sizeof(stats))) {
             debugPrint("\n%s\n", stats);
         }
 

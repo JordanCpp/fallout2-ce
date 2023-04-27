@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "animation.h"
 #include "art.h"
 #include "automap.h"
@@ -30,6 +32,7 @@
 #include "memory.h"
 #include "mouse.h"
 #include "object.h"
+#include "palette.h"
 #include "party_member.h"
 #include "perk.h"
 #include "proto_instance.h"
@@ -52,7 +55,9 @@ namespace fallout {
 #define TILE_WALK_MASK_NAME_SIZE (40)
 #define ENTRANCE_LIST_CAPACITY (10)
 
-#define MAP_AMBIENT_SOUND_EFFECTS_CAPACITY (6)
+// Up from 6 to handle `Tartar 3rd Floor 2` and `Livos Living Rooms` sfx
+// configuration in Olympus.
+#define MAP_AMBIENT_SOUND_EFFECTS_CAPACITY (7)
 #define MAP_STARTING_POINTS_CAPACITY (15)
 
 #define SUBTILE_GRID_WIDTH (7)
@@ -179,6 +184,19 @@ typedef enum SubtileState {
     SUBTILE_STATE_VISITED,
 } SubtileState;
 
+typedef enum SubtileFill {
+    SUBTILE_FILL_NONE,
+    SUBTILE_FILL_N,
+    SUBTILE_FILL_S,
+    SUBTILE_FILL_E,
+    SUBTILE_FILL_W,
+    SUBTILE_FILL_NW,
+    SUBTILE_FILL_NE,
+    SUBTILE_FILL_SW,
+    SUBTILE_FILL_SE,
+    SUBTILE_FILL_COUNT,
+} SubtileFill;
+
 typedef enum WorldMapEncounterFrm {
     WORLD_MAP_ENCOUNTER_FRM_RANDOM_BRIGHT,
     WORLD_MAP_ENCOUNTER_FRM_RANDOM_DARK,
@@ -233,7 +251,7 @@ typedef struct MapAmbientSoundEffectInfo {
 typedef struct MapStartPointInfo {
     int elevation;
     int tile;
-    int field_8;
+    int rotation;
 } MapStartPointInfo;
 
 typedef struct MapInfo {
@@ -269,42 +287,42 @@ typedef struct EncounterCondition {
     int logicalOperators[2];
 } EncounterCondition;
 
-typedef struct ENCOUNTER_ENTRY_ENC {
-    int minQuantity; // min
-    int maxQuantity; // max
-    int field_8;
+typedef struct EncounterTableSubEntry {
+    int minimumCount;
+    int maximumCount;
+    int encounterIndex;
     int situation;
-} ENCOUNTER_ENTRY_ENC;
+} EncounterTableSubEntry;
 
-typedef struct EncounterEntry {
+typedef struct EncounterTableEntry {
     int flags;
     int map;
     int scenery;
     int chance;
     int counter;
     EncounterCondition condition;
-    int field_50;
-    ENCOUNTER_ENTRY_ENC field_54[6];
-} EncounterEntry;
+    int subEntiesLength;
+    EncounterTableSubEntry subEntries[6];
+} EncounterTableEntry;
 
 typedef struct EncounterTable {
     char lookupName[40];
-    int field_28;
+    int index;
     int mapsLength;
     int maps[6];
     int field_48;
     int entriesLength;
-    EncounterEntry entries[41];
+    EncounterTableEntry entries[41];
 } EncounterTable;
 
-typedef struct ENC_BASE_TYPE_38_48 {
+typedef struct EncounterItem {
     int pid;
     int minimumQuantity;
     int maximumQuantity;
     bool isEquipped;
-} ENC_BASE_TYPE_38_48;
+} EncounterItem;
 
-typedef struct ENC_BASE_TYPE_38 {
+typedef struct EncounterEntry {
     char field_0[40];
     int field_28;
     int field_2C;
@@ -314,24 +332,24 @@ typedef struct ENC_BASE_TYPE_38 {
     int distance;
     int tile;
     int itemsLength;
-    ENC_BASE_TYPE_38_48 items[10];
+    EncounterItem items[10];
     int team;
-    int script;
+    int scriptIdx;
     EncounterCondition condition;
-} ENC_BASE_TYPE_38;
+} EncounterEntry;
 
-typedef struct ENC_BASE_TYPE {
+typedef struct Encounter {
     char name[40];
     int position;
     int spacing;
     int distance;
-    int field_34;
-    ENC_BASE_TYPE_38 field_38[10];
-} ENC_BASE_TYPE;
+    int entriesLength;
+    EncounterEntry entries[10];
+} Encounter;
 
 typedef struct SubtileInfo {
     int terrain;
-    int field_4;
+    int fill;
     int encounterChance[DAY_PART_COUNT];
     int encounterType;
     int state;
@@ -376,7 +394,7 @@ typedef struct WmGenData {
     int walkWorldPosMainAxisStepY;
     int walkWorldPosCrossAxisStepY;
 
-    int encounterIconIsVisible;
+    bool encounterIconIsVisible;
     int encounterMapId;
     int encounterTableId;
     int encounterEntryId;
@@ -442,16 +460,16 @@ static int wmWorldMapSaveTempData();
 static int wmWorldMapLoadTempData();
 static int wmConfigInit();
 static int wmReadEncounterType(Config* config, char* lookupName, char* sectionKey);
-static int wmParseEncounterTableIndex(EncounterEntry* entry, char* string);
-static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stringPtr);
+static int wmParseEncounterTableIndex(EncounterTableEntry* encounterTableEntry, char* string);
+static int wmParseEncounterSubEncStr(EncounterTableEntry* encounterTableEntry, char** stringPtr);
 static int wmParseFindSubEncTypeMatch(char* str, int* valuePtr);
 static int wmFindEncBaseTypeMatch(char* str, int* valuePtr);
 static int wmReadEncBaseType(char* name, int* valuePtr);
-static int wmParseEncBaseSubTypeStr(ENC_BASE_TYPE_38* ptr, char** stringPtr);
-static int wmEncBaseTypeSlotInit(ENC_BASE_TYPE* entry);
-static int wmEncBaseSubTypeSlotInit(ENC_BASE_TYPE_38* entry);
-static int wmEncounterSubEncSlotInit(ENCOUNTER_ENTRY_ENC* entry);
-static int wmEncounterTypeSlotInit(EncounterEntry* entry);
+static int wmParseEncBaseSubTypeStr(EncounterEntry* encounterEntry, char** stringPtr);
+static int wmEncBaseTypeSlotInit(Encounter* encounter);
+static int wmEncBaseSubTypeSlotInit(EncounterEntry* encounterEntry);
+static int wmEncounterSubEncSlotInit(EncounterTableSubEntry* encounterTableSubEntry);
+static int wmEncounterTypeSlotInit(EncounterTableEntry* encounterTableEntry);
 static int wmEncounterTableSlotInit(EncounterTable* encounterTable);
 static int wmTileSlotInit(TileInfo* tile);
 static int wmTerrainTypeSlotInit(Terrain* terrain);
@@ -461,8 +479,8 @@ static int wmParseTerrainRndMaps(Config* config, Terrain* terrain);
 static int wmParseSubTileInfo(TileInfo* tile, int row, int column, char* string);
 static int wmParseFindEncounterTypeMatch(char* string, int* valuePtr);
 static int wmParseFindTerrainTypeMatch(char* string, int* valuePtr);
-static int wmParseEncounterItemType(char** stringPtr, ENC_BASE_TYPE_38_48* a2, int* a3, const char* delim);
-static int wmParseItemType(char* string, ENC_BASE_TYPE_38_48* ptr);
+static int wmParseEncounterItemType(char** stringPtr, EncounterItem* encounterItem, int* itemCountPtr, const char* delim);
+static int wmParseItemType(char* string, EncounterItem* encounterItem);
 static int wmParseConditional(char** stringPtr, const char* a2, EncounterCondition* condition);
 static int wmParseSubConditional(char** stringPtr, const char* a2, int* typePtr, int* operatorPtr, int* paramPtr, int* valuePtr);
 static int wmParseConditionalEval(char** stringPtr, int* conditionalOperatorPtr);
@@ -484,10 +502,10 @@ static int wmPartyFindCurSubTile();
 static int wmFindCurSubTileFromPos(int x, int y, SubtileInfo** subtilePtr);
 static int wmFindCurTileFromPos(int x, int y, TileInfo** tilePtr);
 static int wmRndEncounterPick();
-static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCount);
-static int wmSetupRndNextTileNumInit(ENC_BASE_TYPE* a1);
-static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* out_tile_num);
-static bool wmEvalConditional(EncounterCondition* a1, int* a2);
+static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critterCount);
+static int wmSetupRndNextTileNumInit(Encounter* encounter);
+static int wmSetupRndNextTileNum(Encounter* encounter, EncounterEntry* encounterEntry, int* tilePtr);
+static bool wmEvalConditional(EncounterCondition* encounterCondition, int* critterCountPtr);
 static bool wmEvalSubConditional(int operand1, int condionalOperator, int operand2);
 static bool wmGameTimeIncrement(int ticksToAdd);
 static int wmGrabTileWalkMask(int tileIdx);
@@ -530,6 +548,10 @@ static int wmFreeTabsLabelList(int** quickDestinationsListPtr, int* quickDestina
 static void wmRefreshInterfaceDial(bool shouldRefreshWindow);
 static void wmInterfaceDialSyncTime(bool shouldRefreshWindow);
 static int wmAreaFindFirstValidMap(int* mapIdxPtr);
+static void wmFadeOut();
+static void wmFadeIn();
+static void wmFadeReset();
+static void wmBlinkRndEncounterIcon(bool special);
 
 // 0x4BC860
 static const int _can_rest_here[ELEVATION_COUNT] = {
@@ -583,7 +605,7 @@ static const char* wmFreqStrs[ENCOUNTER_FREQUENCY_TYPE_COUNT] = {
 };
 
 // 0x51DDB0
-static const char* wmFillStrs[9] = {
+static const char* wmFillStrs[SUBTILE_FILL_COUNT] = {
     "no_fill",
     "fill_n",
     "fill_s",
@@ -723,12 +745,6 @@ static int wmRndCallCount = 0;
 // 0x51DEAC
 static int _terrainCounter = 1;
 
-// 0x51DEB0
-static unsigned int _lastTime_2 = 0;
-
-// 0x51DEB4
-static bool _couldScroll = true;
-
 // 0x51DEC8
 static char* wmRemapSfxList[2] = {
     _aCricket,
@@ -779,7 +795,7 @@ static Config* pConfigCfg;
 static int wmTownMapSubButtonIds[7];
 
 // 0x672FF4
-static ENC_BASE_TYPE* wmEncBaseTypeList;
+static Encounter* wmEncBaseTypeList;
 
 // 0x672FF8
 static CitySizeDescription wmSphereData[CITY_SIZE_COUNT];
@@ -799,6 +815,7 @@ static bool gTownMapHotkeysFix;
 static double gGameTimeIncRemainder = 0.0;
 static FrmImage _backgroundFrmImage;
 static FrmImage _townFrmImage;
+static bool wmFaded = false;
 
 static inline bool cityIsValid(int city)
 {
@@ -828,7 +845,7 @@ int wmWorldMap_init()
         return -1;
     }
 
-    sprintf(path, "%s%s", asc_5186C8, "worldmap.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "worldmap.msg");
 
     if (!messageListLoad(&wmMsgFile, path)) {
         return -1;
@@ -847,7 +864,18 @@ int wmWorldMap_init()
 
     // SFALL
     gTownMapHotkeysFix = true;
-    configGetBool(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_TOWN_MAP_HOTKEYS_FIX, &gTownMapHotkeysFix);
+    configGetBool(&gSfallConfig, SFALL_CONFIG_MISC_KEY, SFALL_CONFIG_TOWN_MAP_HOTKEYS_FIX_KEY, &gTownMapHotkeysFix);
+
+    // CE: City size fids should be initialized during startup. They are used
+    // during |wmTeleportToArea| to calculate worldmap position when jumping
+    // from Temple to Arroyo - before giving a chance to |wmInterfaceInit| to
+    // initialize it.
+    for (int citySize = 0; citySize < CITY_SIZE_COUNT; citySize++) {
+        CitySizeDescription* citySizeDescription = &(wmSphereData[citySize]);
+        citySizeDescription->fid = buildFid(OBJ_TYPE_INTERFACE, 336 + citySize, 0, 0, 0);
+    }
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_WORLDMAP, &wmMsgFile);
 
     return 0;
 }
@@ -871,7 +899,7 @@ static int wmGenDataInit()
     wmGenData.walkWorldPosMainAxisStepX = 0;
     wmGenData.walkWorldPosMainAxisStepY = 0;
     wmGenData.walkWorldPosCrossAxisStepY = 0;
-    wmGenData.encounterIconIsVisible = 0;
+    wmGenData.encounterIconIsVisible = false;
     wmGenData.encounterMapId = -1;
     wmGenData.encounterTableId = -1;
     wmGenData.encounterEntryId = -1;
@@ -917,7 +945,7 @@ static int wmGenDataReset()
     wmGenData.walkWorldPosMainAxisStepX = 0;
     wmGenData.walkWorldPosMainAxisStepY = 0;
     wmGenData.walkWorldPosCrossAxisStepY = 0;
-    wmGenData.encounterIconIsVisible = 0;
+    wmGenData.encounterIconIsVisible = false;
     wmGenData.mousePressed = false;
     wmGenData.currentAreaId = -1;
     wmGenData.worldPosX = 173;
@@ -1001,6 +1029,7 @@ void wmWorldMap_exit()
         circleBlendTable = NULL;
     }
 
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_WORLDMAP, nullptr);
     messageListFree(&wmMsgFile);
 }
 
@@ -1026,13 +1055,13 @@ int wmWorldMap_save(File* stream)
     int j;
     int k;
     EncounterTable* encounter_table;
-    EncounterEntry* encounter_entry;
+    EncounterTableEntry* encounter_entry;
 
     if (fileWriteBool(stream, wmGenData.didMeetFrankHorrigan) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.currentAreaId) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.worldPosX) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.worldPosY) == -1) return -1;
-    if (fileWriteInt32(stream, wmGenData.encounterIconIsVisible) == -1) return -1;
+    if (fileWriteBool(stream, wmGenData.encounterIconIsVisible) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.encounterMapId) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.encounterTableId) == -1) return -1;
     if (fileWriteInt32(stream, wmGenData.encounterEntryId) == -1) return -1;
@@ -1105,30 +1134,22 @@ int wmWorldMap_save(File* stream)
 // 0x4BD28C
 int wmWorldMap_load(File* stream)
 {
-    int i;
-    int j;
-    int k;
-    int cities_count;
-    int v38;
-    int v39;
-    int v35;
-    EncounterTable* encounter_table;
-    EncounterEntry* encounter_entry;
-
     if (fileReadBool(stream, &(wmGenData.didMeetFrankHorrigan)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.currentAreaId)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.worldPosX)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.worldPosY)) == -1) return -1;
-    if (fileReadInt32(stream, &(wmGenData.encounterIconIsVisible)) == -1) return -1;
+    if (fileReadBool(stream, &(wmGenData.encounterIconIsVisible)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.encounterMapId)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.encounterTableId)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.encounterEntryId)) == -1) return -1;
     if (fileReadBool(stream, &(wmGenData.isInCar)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.currentCarAreaId)) == -1) return -1;
     if (fileReadInt32(stream, &(wmGenData.carFuel)) == -1) return -1;
-    if (fileReadInt32(stream, &(cities_count)) == -1) return -1;
 
-    for (int areaIdx = 0; areaIdx < cities_count; areaIdx++) {
+    int numCities;
+    if (fileReadInt32(stream, &numCities) == -1) return -1;
+
+    for (int areaIdx = 0; areaIdx < numCities; areaIdx++) {
         CityInfo* city = &(wmAreaInfoList[areaIdx]);
 
         if (fileReadInt32(stream, &(city->x)) == -1) return -1;
@@ -1150,10 +1171,13 @@ int wmWorldMap_load(File* stream)
         }
     }
 
-    if (fileReadInt32(stream, &(v39)) == -1) return -1;
-    if (fileReadInt32(stream, &(v38)) == -1) return -1;
+    int numTiles;
+    if (fileReadInt32(stream, &numTiles) == -1) return -1;
 
-    for (int tileIndex = 0; tileIndex < v39; tileIndex++) {
+    int numHorizontalTiles;
+    if (fileReadInt32(stream, &numHorizontalTiles) == -1) return -1;
+
+    for (int tileIndex = 0; tileIndex < numTiles; tileIndex++) {
         TileInfo* tile = &(wmTileInfoList[tileIndex]);
 
         for (int column = 0; column < SUBTILE_GRID_HEIGHT; column++) {
@@ -1165,16 +1189,20 @@ int wmWorldMap_load(File* stream)
         }
     }
 
-    if (fileReadInt32(stream, &(v35)) == -1) return -1;
+    int numCounters;
+    if (fileReadInt32(stream, &numCounters) == -1) return -1;
 
-    for (i = 0; i < v35; i++) {
-        if (fileReadInt32(stream, &(j)) == -1) return -1;
-        encounter_table = &(wmEncounterTableList[j]);
+    for (int counterIdx = 0; counterIdx < numCounters; counterIdx++) {
+        int encounterTableIdx;
+        int encounterTableEntryIdx;
 
-        if (fileReadInt32(stream, &(k)) == -1) return -1;
-        encounter_entry = &(encounter_table->entries[k]);
+        if (fileReadInt32(stream, &encounterTableIdx) == -1) return -1;
+        EncounterTable* encounterTable = &(wmEncounterTableList[encounterTableIdx]);
 
-        if (fileReadInt32(stream, &(encounter_entry->counter)) == -1) return -1;
+        if (fileReadInt32(stream, &encounterTableEntryIdx) == -1) return -1;
+        EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[encounterTableEntryIdx]);
+
+        if (fileReadInt32(stream, &(encounterTableEntry->counter)) == -1) return -1;
     }
 
     wmInterfaceCenterOnParty();
@@ -1243,7 +1271,7 @@ static int wmConfigInit()
 
         for (int index = 0;; index++) {
             char section[40];
-            sprintf(section, "Encounter Table %d", index);
+            snprintf(section, sizeof(section), "Encounter Table %d", index);
 
             char* lookupName;
             if (!configGetString(&config, section, "lookup_name", &lookupName)) {
@@ -1262,7 +1290,7 @@ static int wmConfigInit()
 
         for (int tileIndex = 0; tileIndex < 9999; tileIndex++) {
             char section[40];
-            sprintf(section, "Tile %d", tileIndex);
+            snprintf(section, sizeof(section), "Tile %d", tileIndex);
 
             int artIndex;
             if (!configGetInt(&config, section, "art_idx", &artIndex)) {
@@ -1299,7 +1327,7 @@ static int wmConfigInit()
             for (int column = 0; column < SUBTILE_GRID_HEIGHT; column++) {
                 for (int row = 0; row < SUBTILE_GRID_WIDTH; row++) {
                     char key[40];
-                    sprintf(key, "%d_%d", row, column);
+                    snprintf(key, sizeof(key), "%d_%d", row, column);
 
                     char* subtileProps;
                     if (!configGetString(&config, section, key, &subtileProps)) {
@@ -1339,7 +1367,7 @@ static int wmReadEncounterType(Config* config, char* lookupName, char* sectionKe
     // NOTE: Uninline.
     wmEncounterTableSlotInit(encounterTable);
 
-    encounterTable->field_28 = wmMaxEncounterInfoTables - 1;
+    encounterTable->index = wmMaxEncounterInfoTables - 1;
     strncpy(encounterTable->lookupName, lookupName, 40);
 
     char* str;
@@ -1359,7 +1387,7 @@ static int wmReadEncounterType(Config* config, char* lookupName, char* sectionKe
 
     for (;;) {
         char key[40];
-        sprintf(key, "enc_%02d", encounterTable->entriesLength);
+        snprintf(key, sizeof(key), "enc_%02d", encounterTable->entriesLength);
 
         char* str;
         if (!configGetString(config, sectionKey, key, &str)) {
@@ -1384,31 +1412,41 @@ static int wmReadEncounterType(Config* config, char* lookupName, char* sectionKe
 }
 
 // 0x4BDB64
-static int wmParseEncounterTableIndex(EncounterEntry* entry, char* string)
+static int wmParseEncounterTableIndex(EncounterTableEntry* encounterTableEntry, char* string)
 {
     // NOTE: Uninline.
-    if (wmEncounterTypeSlotInit(entry) == -1) {
+    if (wmEncounterTypeSlotInit(encounterTableEntry) == -1) {
         return -1;
     }
 
     while (string != NULL && *string != '\0') {
-        strParseIntWithKey(&string, "chance", &(entry->chance), ":");
-        strParseIntWithKey(&string, "counter", &(entry->counter), ":");
+        strParseIntWithKey(&string, "chance", &(encounterTableEntry->chance), ":");
+        strParseIntWithKey(&string, "counter", &(encounterTableEntry->counter), ":");
 
         if (strstr(string, "special")) {
-            entry->flags |= ENCOUNTER_ENTRY_SPECIAL;
-            string += 8;
+            encounterTableEntry->flags |= ENCOUNTER_ENTRY_SPECIAL;
+
+            // CE: Original code unconditionally consumes 8 characters, which is
+            // right when "special" is followed by conditions (separated with
+            // comma). However when "special" is the last keyword (which I guess
+            // is wrong, but present in worldmap.txt), consuming 8 characters
+            // sets pointer past NULL terminator, which can lead to many bad
+            // things (UB).
+            string += 7;
+            if (*string != '\0') {
+                string++;
+            }
         }
 
         if (string != NULL) {
             char* pch = strstr(string, "map:");
             if (pch != NULL) {
                 string = pch + 4;
-                strParseStrFromFunc(&string, &(entry->map), wmParseFindMapIdxMatch);
+                strParseStrFromFunc(&string, &(encounterTableEntry->map), wmParseFindMapIdxMatch);
             }
         }
 
-        if (wmParseEncounterSubEncStr(entry, &string) == -1) {
+        if (wmParseEncounterSubEncStr(encounterTableEntry, &string) == -1) {
             break;
         }
 
@@ -1416,18 +1454,18 @@ static int wmParseEncounterTableIndex(EncounterEntry* entry, char* string)
             char* pch = strstr(string, "scenery:");
             if (pch != NULL) {
                 string = pch + 8;
-                strParseStrFromList(&string, &(entry->scenery), wmSceneryStrs, ENCOUNTER_SCENERY_TYPE_COUNT);
+                strParseStrFromList(&string, &(encounterTableEntry->scenery), wmSceneryStrs, ENCOUNTER_SCENERY_TYPE_COUNT);
             }
         }
 
-        wmParseConditional(&string, "if", &(entry->condition));
+        wmParseConditional(&string, "if", &(encounterTableEntry->condition));
     }
 
     return 0;
 }
 
 // 0x4BDCA8
-static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stringPtr)
+static int wmParseEncounterSubEncStr(EncounterTableEntry* encounterTableEntry, char** stringPtr)
 {
     char* string = *stringPtr;
     if (compat_strnicmp(string, "enc:", 4) != 0) {
@@ -1448,14 +1486,14 @@ static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stri
     }
 
     while (string != NULL) {
-        ENCOUNTER_ENTRY_ENC* entry = &(encounterEntry->field_54[encounterEntry->field_50]);
+        EncounterTableSubEntry* encounterTableSubEntry = &(encounterTableEntry->subEntries[encounterTableEntry->subEntiesLength]);
 
         // NOTE: Uninline.
-        wmEncounterSubEncSlotInit(entry);
+        wmEncounterSubEncSlotInit(encounterTableSubEntry);
 
         if (*string == '(') {
             string++;
-            entry->minQuantity = atoi(string);
+            encounterTableSubEntry->minimumCount = atoi(string);
 
             while (*string != '\0' && *string != '-') {
                 string++;
@@ -1465,7 +1503,7 @@ static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stri
                 string++;
             }
 
-            entry->maxQuantity = atoi(string);
+            encounterTableSubEntry->maximumCount = atoi(string);
 
             while (*string != '\0' && *string != ')') {
                 string++;
@@ -1488,7 +1526,7 @@ static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stri
         char ch = *end;
         *end = '\0';
 
-        if (strParseStrFromFunc(&string, &(entry->field_8), wmParseFindSubEncTypeMatch) == -1) {
+        if (strParseStrFromFunc(&string, &(encounterTableSubEntry->encounterIndex), wmParseFindSubEncTypeMatch) == -1) {
             return -1;
         }
 
@@ -1507,12 +1545,12 @@ static int wmParseEncounterSubEncStr(EncounterEntry* encounterEntry, char** stri
         *end = '\0';
 
         if (*string != '\0') {
-            strParseStrFromList(&string, &(entry->situation), wmEncOpStrs, ENCOUNTER_SITUATION_COUNT);
+            strParseStrFromList(&string, &(encounterTableSubEntry->situation), wmEncOpStrs, ENCOUNTER_SITUATION_COUNT);
         }
 
         *end = ch;
 
-        encounterEntry->field_50++;
+        encounterTableEntry->subEntiesLength++;
 
         while (*string == ' ') {
             string++;
@@ -1569,10 +1607,10 @@ static int wmFindEncBaseTypeMatch(char* str, int* valuePtr)
 static int wmReadEncBaseType(char* name, int* valuePtr)
 {
     char section[40];
-    sprintf(section, "Encounter: %s", name);
+    snprintf(section, sizeof(section), "Encounter: %s", name);
 
     char key[40];
-    sprintf(key, "type_00");
+    snprintf(key, sizeof(key), "type_00");
 
     char* string;
     if (!configGetString(pConfigCfg, section, key, &string)) {
@@ -1581,45 +1619,45 @@ static int wmReadEncBaseType(char* name, int* valuePtr)
 
     wmMaxEncBaseTypes++;
 
-    ENC_BASE_TYPE* arr = (ENC_BASE_TYPE*)internal_realloc(wmEncBaseTypeList, sizeof(*wmEncBaseTypeList) * wmMaxEncBaseTypes);
-    if (arr == NULL) {
+    Encounter* encounters = (Encounter*)internal_realloc(wmEncBaseTypeList, sizeof(*wmEncBaseTypeList) * wmMaxEncBaseTypes);
+    if (encounters == NULL) {
         showMesageBox("\nwmConfigInit::Error Reading EncBaseType!");
         exit(1);
     }
 
-    wmEncBaseTypeList = arr;
+    wmEncBaseTypeList = encounters;
 
-    ENC_BASE_TYPE* entry = &(arr[wmMaxEncBaseTypes - 1]);
+    Encounter* encounter = &(encounters[wmMaxEncBaseTypes - 1]);
 
     // NOTE: Uninline.
-    wmEncBaseTypeSlotInit(entry);
+    wmEncBaseTypeSlotInit(encounter);
 
-    strncpy(entry->name, name, 40);
+    strncpy(encounter->name, name, 40);
 
     while (1) {
-        if (wmParseEncBaseSubTypeStr(&(entry->field_38[entry->field_34]), &string) == -1) {
+        if (wmParseEncBaseSubTypeStr(&(encounter->entries[encounter->entriesLength]), &string) == -1) {
             return -1;
         }
 
-        entry->field_34++;
+        encounter->entriesLength++;
 
-        sprintf(key, "type_%02d", entry->field_34);
+        snprintf(key, sizeof(key), "type_%02d", encounter->entriesLength);
 
         if (!configGetString(pConfigCfg, section, key, &string)) {
             int team;
             configGetInt(pConfigCfg, section, "team_num", &team);
 
-            for (int index = 0; index < entry->field_34; index++) {
-                ENC_BASE_TYPE_38* ptr = &(entry->field_38[index]);
-                if (PID_TYPE(ptr->pid) == OBJ_TYPE_CRITTER) {
-                    ptr->team = team;
+            for (int index = 0; index < encounter->entriesLength; index++) {
+                EncounterEntry* encounterEntry = &(encounter->entries[index]);
+                if (PID_TYPE(encounterEntry->pid) == OBJ_TYPE_CRITTER) {
+                    encounterEntry->team = team;
                 }
             }
 
             if (configGetString(pConfigCfg, section, "position", &string)) {
-                strParseStrFromList(&string, &(entry->position), wmFormationStrs, ENCOUNTER_FORMATION_TYPE_COUNT);
-                strParseIntWithKey(&string, "spacing", &(entry->spacing), ":");
-                strParseIntWithKey(&string, "distance", &(entry->distance), ":");
+                strParseStrFromList(&string, &(encounter->position), wmFormationStrs, ENCOUNTER_FORMATION_TYPE_COUNT);
+                strParseIntWithKey(&string, "spacing", &(encounter->spacing), ":");
+                strParseIntWithKey(&string, "distance", &(encounter->distance), ":");
             }
 
             *valuePtr = wmMaxEncBaseTypes - 1;
@@ -1632,42 +1670,42 @@ static int wmReadEncBaseType(char* name, int* valuePtr)
 }
 
 // 0x4BE140
-static int wmParseEncBaseSubTypeStr(ENC_BASE_TYPE_38* ptr, char** stringPtr)
+static int wmParseEncBaseSubTypeStr(EncounterEntry* encounterEntry, char** stringPtr)
 {
     char* string = *stringPtr;
 
     // NOTE: Uninline.
-    if (wmEncBaseSubTypeSlotInit(ptr) == -1) {
+    if (wmEncBaseSubTypeSlotInit(encounterEntry) == -1) {
         return -1;
     }
 
-    if (strParseIntWithKey(&string, "ratio", &(ptr->ratio), ":") == 0) {
-        ptr->field_2C = 0;
+    if (strParseIntWithKey(&string, "ratio", &(encounterEntry->ratio), ":") == 0) {
+        encounterEntry->field_2C = 0;
     }
 
     if (strstr(string, "dead,") == string) {
-        ptr->flags |= ENCOUNTER_SUBINFO_DEAD;
+        encounterEntry->flags |= ENCOUNTER_SUBINFO_DEAD;
         string += 5;
     }
 
-    strParseIntWithKey(&string, "pid", &(ptr->pid), ":");
-    if (ptr->pid == 0) {
-        ptr->pid = -1;
+    strParseIntWithKey(&string, "pid", &(encounterEntry->pid), ":");
+    if (encounterEntry->pid == 0) {
+        encounterEntry->pid = -1;
     }
 
-    strParseIntWithKey(&string, "distance", &(ptr->distance), ":");
-    strParseIntWithKey(&string, "tilenum", &(ptr->tile), ":");
+    strParseIntWithKey(&string, "distance", &(encounterEntry->distance), ":");
+    strParseIntWithKey(&string, "tilenum", &(encounterEntry->tile), ":");
 
     for (int index = 0; index < 10; index++) {
         if (strstr(string, "item:") == NULL) {
             break;
         }
 
-        wmParseEncounterItemType(&string, &(ptr->items[ptr->itemsLength]), &(ptr->itemsLength), ":");
+        wmParseEncounterItemType(&string, &(encounterEntry->items[encounterEntry->itemsLength]), &(encounterEntry->itemsLength), ":");
     }
 
-    strParseIntWithKey(&string, "script", &(ptr->script), ":");
-    wmParseConditional(&string, "if", &(ptr->condition));
+    strParseIntWithKey(&string, "script", &(encounterEntry->scriptIdx), ":");
+    wmParseConditional(&string, "if", &(encounterEntry->condition));
 
     return 0;
 }
@@ -1675,13 +1713,13 @@ static int wmParseEncBaseSubTypeStr(ENC_BASE_TYPE_38* ptr, char** stringPtr)
 // NOTE: Inlined.
 //
 // 0x4BE2A0
-static int wmEncBaseTypeSlotInit(ENC_BASE_TYPE* entry)
+static int wmEncBaseTypeSlotInit(Encounter* encounter)
 {
-    entry->name[0] = '\0';
-    entry->position = ENCOUNTER_FORMATION_TYPE_SURROUNDING;
-    entry->spacing = 1;
-    entry->distance = -1;
-    entry->field_34 = 0;
+    encounter->name[0] = '\0';
+    encounter->position = ENCOUNTER_FORMATION_TYPE_SURROUNDING;
+    encounter->spacing = 1;
+    encounter->distance = -1;
+    encounter->entriesLength = 0;
 
     return 0;
 }
@@ -1689,31 +1727,31 @@ static int wmEncBaseTypeSlotInit(ENC_BASE_TYPE* entry)
 // NOTE: Inlined.
 //
 // 0x4BE2C4
-static int wmEncBaseSubTypeSlotInit(ENC_BASE_TYPE_38* entry)
+static int wmEncBaseSubTypeSlotInit(EncounterEntry* encounterEntry)
 {
-    entry->field_28 = -1;
-    entry->field_2C = 1;
-    entry->ratio = 100;
-    entry->pid = -1;
-    entry->flags = 0;
-    entry->distance = 0;
-    entry->tile = -1;
-    entry->itemsLength = 0;
-    entry->script = -1;
-    entry->team = -1;
+    encounterEntry->field_28 = -1;
+    encounterEntry->field_2C = 1;
+    encounterEntry->ratio = 100;
+    encounterEntry->pid = -1;
+    encounterEntry->flags = 0;
+    encounterEntry->distance = 0;
+    encounterEntry->tile = -1;
+    encounterEntry->itemsLength = 0;
+    encounterEntry->scriptIdx = -1;
+    encounterEntry->team = -1;
 
-    return wmConditionalDataInit(&(entry->condition));
+    return wmConditionalDataInit(&(encounterEntry->condition));
 }
 
 // NOTE: Inlined.
 //
 // 0x4BE32C
-static int wmEncounterSubEncSlotInit(ENCOUNTER_ENTRY_ENC* entry)
+static int wmEncounterSubEncSlotInit(EncounterTableSubEntry* encounterTableSubEntry)
 {
-    entry->minQuantity = 1;
-    entry->maxQuantity = 1;
-    entry->field_8 = -1;
-    entry->situation = ENCOUNTER_SITUATION_NOTHING;
+    encounterTableSubEntry->minimumCount = 1;
+    encounterTableSubEntry->maximumCount = 1;
+    encounterTableSubEntry->encounterIndex = -1;
+    encounterTableSubEntry->situation = ENCOUNTER_SITUATION_NOTHING;
 
     return 0;
 }
@@ -1721,16 +1759,16 @@ static int wmEncounterSubEncSlotInit(ENCOUNTER_ENTRY_ENC* entry)
 // NOTE: Inlined.
 //
 // 0x4BE34C
-static int wmEncounterTypeSlotInit(EncounterEntry* entry)
+static int wmEncounterTypeSlotInit(EncounterTableEntry* encounterTableEntry)
 {
-    entry->flags = 0;
-    entry->map = -1;
-    entry->scenery = ENCOUNTER_SCENERY_TYPE_NORMAL;
-    entry->chance = 0;
-    entry->counter = -1;
-    entry->field_50 = 0;
+    encounterTableEntry->flags = 0;
+    encounterTableEntry->map = -1;
+    encounterTableEntry->scenery = ENCOUNTER_SCENERY_TYPE_NORMAL;
+    encounterTableEntry->chance = 0;
+    encounterTableEntry->counter = -1;
+    encounterTableEntry->subEntiesLength = 0;
 
-    return wmConditionalDataInit(&(entry->condition));
+    return wmConditionalDataInit(&(encounterTableEntry->condition));
 }
 
 // NOTE: Inlined.
@@ -1862,11 +1900,11 @@ static int wmParseTerrainTypes(Config* config, char* string)
 static int wmParseTerrainRndMaps(Config* config, Terrain* terrain)
 {
     char section[40];
-    sprintf(section, "Random Maps: %s", terrain->lookupName);
+    snprintf(section, sizeof(section), "Random Maps: %s", terrain->lookupName);
 
     for (;;) {
         char key[40];
-        sprintf(key, "map_%02d", terrain->mapsLength);
+        snprintf(key, sizeof(key), "map_%02d", terrain->mapsLength);
 
         char* string;
         if (!configGetString(config, section, key, &string)) {
@@ -1897,7 +1935,7 @@ static int wmParseSubTileInfo(TileInfo* tile, int row, int column, char* string)
         return -1;
     }
 
-    if (strParseStrFromList(&string, &(subtile->field_4), wmFillStrs, 9) == -1) {
+    if (strParseStrFromList(&string, &(subtile->fill), wmFillStrs, SUBTILE_FILL_COUNT) == -1) {
         return -1;
     }
 
@@ -1950,15 +1988,9 @@ static int wmParseFindTerrainTypeMatch(char* string, int* valuePtr)
 }
 
 // 0x4BE7A4
-static int wmParseEncounterItemType(char** stringPtr, ENC_BASE_TYPE_38_48* a2, int* a3, const char* delim)
+static int wmParseEncounterItemType(char** stringPtr, EncounterItem* encounterItem, int* itemCountPtr, const char* delimeters)
 {
-    char* string;
-    size_t v2, v3;
-    char tmp, tmp2;
-    int v20;
-
-    string = *stringPtr;
-    v20 = 0;
+    char* string = *stringPtr;
 
     if (*string == '\0') {
         return -1;
@@ -1973,43 +2005,44 @@ static int wmParseEncounterItemType(char** stringPtr, ENC_BASE_TYPE_38_48* a2, i
 
     string += strspn(string, " ");
 
-    v2 = strcspn(string, ",");
+    size_t commaPos = strcspn(string, ",");
 
-    tmp = string[v2];
-    string[v2] = '\0';
+    char comma = string[commaPos];
+    string[commaPos] = '\0';
 
-    v3 = strcspn(string, delim);
-    tmp2 = string[v3];
-    string[v3] = '\0';
+    size_t delimPos = strcspn(string, delimeters);
+    char delim = string[delimPos];
+    string[delimPos] = '\0';
 
+    bool found = false;
     if (strcmp(string, "item") == 0) {
-        *stringPtr += v2 + 1;
-        v20 = 1;
-        wmParseItemType(string + v3 + 1, a2);
-        *a3 = *a3 + 1;
+        *stringPtr += commaPos + 1;
+        found = true;
+        wmParseItemType(string + delimPos + 1, encounterItem);
+        *itemCountPtr += 1;
     }
 
-    string[v3] = tmp2;
-    string[v2] = tmp;
+    string[delimPos] = delim;
+    string[commaPos] = comma;
 
-    return v20 ? 0 : -1;
+    return found ? 0 : -1;
 }
 
 // 0x4BE888
-static int wmParseItemType(char* string, ENC_BASE_TYPE_38_48* ptr)
+static int wmParseItemType(char* string, EncounterItem* encounterItem)
 {
     while (*string == ' ') {
         string++;
     }
 
-    ptr->minimumQuantity = 1;
-    ptr->maximumQuantity = 1;
-    ptr->isEquipped = false;
+    encounterItem->minimumQuantity = 1;
+    encounterItem->maximumQuantity = 1;
+    encounterItem->isEquipped = false;
 
     if (*string == '(') {
         string++;
 
-        ptr->minimumQuantity = atoi(string);
+        encounterItem->minimumQuantity = atoi(string);
 
         while (isdigit(*string)) {
             string++;
@@ -2018,13 +2051,13 @@ static int wmParseItemType(char* string, ENC_BASE_TYPE_38_48* ptr)
         if (*string == '-') {
             string++;
 
-            ptr->maximumQuantity = atoi(string);
+            encounterItem->maximumQuantity = atoi(string);
 
             while (isdigit(*string)) {
                 string++;
             }
         } else {
-            ptr->maximumQuantity = ptr->minimumQuantity;
+            encounterItem->maximumQuantity = encounterItem->minimumQuantity;
         }
 
         if (*string == ')') {
@@ -2036,7 +2069,7 @@ static int wmParseItemType(char* string, ENC_BASE_TYPE_38_48* ptr)
         string++;
     }
 
-    ptr->pid = atoi(string);
+    encounterItem->pid = atoi(string);
 
     while (isdigit(*string)) {
         string++;
@@ -2050,7 +2083,7 @@ static int wmParseItemType(char* string, ENC_BASE_TYPE_38_48* ptr)
         || strstr(string, "(wielded)") != NULL
         || strstr(string, "{worn}") != NULL
         || strstr(string, "(worn)") != NULL) {
-        ptr->isEquipped = true;
+        encounterItem->isEquipped = true;
     }
 
     return 0;
@@ -2090,13 +2123,6 @@ static int wmParseConditional(char** stringPtr, const char* a2, EncounterConditi
 // 0x4BEA24
 static int wmParseSubConditional(char** stringPtr, const char* a2, int* typePtr, int* operatorPtr, int* paramPtr, int* valuePtr)
 {
-    char* pch;
-    size_t v2;
-    size_t v3;
-    char tmp;
-    char tmp2;
-    int v57;
-
     char* string = *stringPtr;
 
     if (string == NULL) {
@@ -2116,29 +2142,30 @@ static int wmParseSubConditional(char** stringPtr, const char* a2, int* typePtr,
 
     string += strspn(string, " ");
 
-    v2 = strcspn(string, ",");
+    size_t commaPos = strcspn(string, ",");
 
-    tmp = *(string + v2);
-    *(string + v2) = '\0';
+    char comma = string[commaPos];
+    string[commaPos] = '\0';
 
-    v3 = strcspn(string, "(");
-    tmp2 = *(string + v3);
-    *(string + v3) = '\0';
+    size_t parenPos = strcspn(string, "(");
+    char paren = string[parenPos];
+    string[parenPos] = '\0';
 
-    v57 = 0;
+    bool found = false;
     if (strstr(string, a2) == string) {
-        v57 = 1;
+        found = true;
     }
 
-    *(string + v3) = tmp2;
-    *(string + v2) = tmp;
+    string[parenPos] = paren;
+    string[commaPos] = comma;
 
-    if (v57 == 0) {
+    if (!found) {
         return -1;
     }
 
-    string += v3 + 1;
+    string += parenPos + 1;
 
+    char* pch;
     if (strstr(string, "rand(") == string) {
         string += 5;
         *typePtr = ENCOUNTER_CONDITION_TYPE_RANDOM;
@@ -2365,7 +2392,7 @@ static int wmAreaInit()
     if (configRead(&cfg, "data\\city.txt", true)) {
         area_idx = 0;
         do {
-            sprintf(section, "Area %02d", area_idx);
+            snprintf(section, sizeof(section), "Area %02d", area_idx);
             if (!configGetInt(&cfg, section, "townmap_art_idx", &num)) {
                 break;
             }
@@ -2446,7 +2473,7 @@ static int wmAreaInit()
             }
 
             while (city->entrancesLength < ENTRANCE_LIST_CAPACITY) {
-                sprintf(key, "entrance_%d", city->entrancesLength);
+                snprintf(key, sizeof(key), "entrance_%d", city->entrancesLength);
 
                 if (!configGetString(&cfg, section, key, &str)) {
                     break;
@@ -2557,9 +2584,6 @@ static int wmMapInit()
     int num;
     MapInfo* maps;
     MapInfo* map;
-    int j;
-    MapAmbientSoundEffectInfo* sfx;
-    MapStartPointInfo* rsp;
 
     Config config;
     if (!configInit(&config)) {
@@ -2569,7 +2593,7 @@ static int wmMapInit()
     if (configRead(&config, "data\\maps.txt", true)) {
         for (int mapIdx = 0;; mapIdx++) {
             char section[40];
-            sprintf(section, "Map %03d", mapIdx);
+            snprintf(section, sizeof(section), "Map %03d", mapIdx);
 
             if (!configGetString(&config, section, "lookup_name", &str)) {
                 break;
@@ -2604,7 +2628,7 @@ static int wmMapInit()
 
             if (configGetString(&config, section, "ambient_sfx", &str)) {
                 while (str) {
-                    sfx = &(map->ambientSoundEffects[map->ambientSoundEffectsLength]);
+                    MapAmbientSoundEffectInfo* sfx = &(map->ambientSoundEffects[map->ambientSoundEffectsLength]);
                     if (strParseKeyValue(&str, sfx->name, &(sfx->chance), ":") == -1) {
                         return -1;
                     }
@@ -2684,14 +2708,14 @@ static int wmMapInit()
             }
 
             if (configGetString(&config, section, "random_start_point_0", &str)) {
-                j = 0;
+                int rspIndex = 0;
                 while (str != NULL) {
                     while (*str != '\0') {
                         if (map->startPointsLength >= MAP_STARTING_POINTS_CAPACITY) {
                             break;
                         }
 
-                        rsp = &(map->startPoints[map->startPointsLength]);
+                        MapStartPointInfo* rsp = &(map->startPoints[map->startPointsLength]);
 
                         // NOTE: Uninline.
                         wmRStartSlotInit(rsp);
@@ -2703,7 +2727,7 @@ static int wmMapInit()
                     }
 
                     char key[40];
-                    sprintf(key, "random_start_point_%1d", ++j);
+                    snprintf(key, sizeof(key), "random_start_point_%1d", ++rspIndex);
 
                     if (!configGetString(&config, section, key, &str)) {
                         str = NULL;
@@ -2725,7 +2749,7 @@ static int wmRStartSlotInit(MapStartPointInfo* rsp)
 {
     rsp->elevation = 0;
     rsp->tile = -1;
-    rsp->field_8 = -1;
+    rsp->rotation = -1;
 
     return 0;
 }
@@ -2737,14 +2761,14 @@ int wmMapMaxCount()
 }
 
 // 0x4BF974
-int wmMapIdxToName(int mapIdx, char* dest)
+int wmMapIdxToName(int mapIdx, char* dest, size_t size)
 {
     if (mapIdx == -1 || mapIdx > wmMaxMapNum) {
         dest[0] = '\0';
         return -1;
     }
 
-    sprintf(dest, "%s.MAP", wmMapInfoList[mapIdx].mapFileName);
+    snprintf(dest, size, "%s.MAP", wmMapInfoList[mapIdx].mapFileName);
     return 0;
 }
 
@@ -2936,30 +2960,36 @@ void wmWorldMap()
 // 0x4BFE10
 static int wmWorldMapFunc(int a1)
 {
+    ScopedGameMode gm(GameMode::kWorldmap);
+
+    wmFadeOut();
+
     if (wmInterfaceInit() == -1) {
         wmInterfaceExit();
+        wmFadeReset();
         return -1;
     }
 
+    wmFadeIn();
+
     wmMatchWorldPosToArea(wmGenData.worldPosX, wmGenData.worldPosY, &(wmGenData.currentAreaId));
 
-    unsigned int v24 = 0;
+    unsigned int partyHealTime = 0;
     int map = -1;
-    int v25 = 0;
-
     int rc = 0;
-    for (;;) {
+
+    while (true) {
         sharedFpsLimiter.mark();
 
         int keyCode = inputGetInput();
-        unsigned int tick = getTicks();
+        unsigned int now = getTicks();
 
         int mouseX;
         int mouseY;
         mouseGetPositionInWindow(wmBkWin, &mouseX, &mouseY);
 
-        int v4 = wmWorldOffsetX + mouseX - WM_VIEW_X;
-        int v5 = wmWorldOffsetY + mouseY - WM_VIEW_Y;
+        int worldX = wmWorldOffsetX + mouseX - WM_VIEW_X;
+        int worldY = wmWorldOffsetY + mouseY - WM_VIEW_Y;
 
         if (keyCode == KEY_CTRL_Q || keyCode == KEY_CTRL_X || keyCode == KEY_F10) {
             showQuitConfirmationDialog();
@@ -3008,7 +3038,7 @@ static int wmWorldMapFunc(int a1)
                     wmGenData.walkDestinationY = 0;
                     wmGenData.isWalking = false;
 
-                    wmMatchWorldPosToArea(v4, v5, &(wmGenData.currentAreaId));
+                    wmMatchWorldPosToArea(worldX, worldY, &(wmGenData.currentAreaId));
 
                     wmGenData.isInCar = false;
 
@@ -3036,10 +3066,10 @@ static int wmWorldMapFunc(int a1)
 
             wmInterfaceRefresh();
 
-            if (getTicksBetween(tick, v24) > 1000) {
+            if (getTicksBetween(now, partyHealTime) > 1000) {
                 if (_partyMemberRestingHeal(3)) {
                     interfaceRenderHitPoints(false);
-                    v24 = tick;
+                    partyHealTime = now;
                 }
             }
 
@@ -3064,6 +3094,8 @@ static int wmWorldMapFunc(int a1)
                         if (wmGenData.isInCar) {
                             wmMatchAreaContainingMapIdx(wmGenData.encounterMapId, &(wmGenData.currentCarAreaId));
                         }
+
+                        wmFadeOut();
                         mapLoadById(wmGenData.encounterMapId);
                     }
                     break;
@@ -3073,7 +3105,7 @@ static int wmWorldMapFunc(int a1)
 
         if ((mouseEvent & MOUSE_EVENT_LEFT_BUTTON_DOWN) != 0 && (mouseEvent & MOUSE_EVENT_LEFT_BUTTON_REPEAT) == 0) {
             if (mouseHitTestInWindow(wmBkWin, WM_VIEW_X, WM_VIEW_Y, 472, 465)) {
-                if (!wmGenData.isWalking && !wmGenData.mousePressed && abs(wmGenData.worldPosX - v4) < 5 && abs(wmGenData.worldPosY - v5) < 5) {
+                if (!wmGenData.isWalking && !wmGenData.mousePressed && abs(wmGenData.worldPosX - worldX) < 5 && abs(wmGenData.worldPosY - worldY) < 5) {
                     wmGenData.mousePressed = true;
                     wmInterfaceRefresh();
                     renderPresent();
@@ -3088,17 +3120,17 @@ static int wmWorldMapFunc(int a1)
                 wmGenData.mousePressed = false;
                 wmInterfaceRefresh();
 
-                if (abs(wmGenData.worldPosX - v4) < 5 && abs(wmGenData.worldPosY - v5) < 5) {
+                if (abs(wmGenData.worldPosX - worldX) < 5 && abs(wmGenData.worldPosY - worldY) < 5) {
                     if (wmGenData.currentAreaId != -1) {
                         CityInfo* city = &(wmAreaInfoList[wmGenData.currentAreaId]);
                         if (city->visitedState == 2 && city->mapFid != -1) {
                             if (wmTownMapFunc(&map) == -1) {
-                                v25 = -1;
+                                rc = -1;
                                 break;
                             }
                         } else {
                             if (wmAreaFindFirstValidMap(&map) == -1) {
-                                v25 = -1;
+                                rc = -1;
                                 break;
                             }
 
@@ -3117,13 +3149,15 @@ static int wmWorldMapFunc(int a1)
                                 wmGenData.currentCarAreaId = wmGenData.currentAreaId;
                             }
                         }
+
+                        wmFadeOut();
                         mapLoadById(map);
                         break;
                     }
                 }
             } else {
                 if (mouseHitTestInWindow(wmBkWin, WM_VIEW_X, WM_VIEW_Y, 472, 465)) {
-                    wmPartyInitWalking(v4, v5);
+                    wmPartyInitWalking(worldX, worldY);
                 }
 
                 wmGenData.mousePressed = false;
@@ -3143,9 +3177,18 @@ static int wmWorldMapFunc(int a1)
 
                     if (map != -1) {
                         if (wmGenData.isInCar) {
+                            // SFALL: Fix for the car being lost when entering a
+                            // location via the Town/World button and then
+                            // leaving on foot.
+                            //
+                            // CE: Fix is very different, but looks right -
+                            // matches the code above (processing mouse events).
+                            wmGenData.isInCar = false;
+
                             wmMatchAreaContainingMapIdx(map, &(wmGenData.currentCarAreaId));
                         }
 
+                        wmFadeOut();
                         mapLoadById(map);
                     }
                 }
@@ -3204,7 +3247,7 @@ static int wmWorldMapFunc(int a1)
             }
         }
 
-        if (map != -1 || v25 == -1) {
+        if (map != -1 || rc == -1) {
             break;
         }
 
@@ -3213,8 +3256,11 @@ static int wmWorldMapFunc(int a1)
     }
 
     if (wmInterfaceExit() == -1) {
+        wmFadeReset();
         return -1;
     }
+
+    wmFadeIn();
 
     return rc;
 }
@@ -3238,29 +3284,8 @@ int wmCheckGameAreaEvents()
 // 0x4C05C4
 static int wmInterfaceCenterOnParty()
 {
-    int v0;
-    int v1;
-
-    v0 = wmGenData.worldPosX - 203;
-    if ((v0 & 0x80000000) == 0) {
-        if (v0 > wmGenData.viewportMaxX) {
-            v0 = wmGenData.viewportMaxX;
-        }
-    } else {
-        v0 = 0;
-    }
-
-    v1 = wmGenData.worldPosY - 200;
-    if ((v1 & 0x80000000) == 0) {
-        if (v1 > wmGenData.viewportMaxY) {
-            v1 = wmGenData.viewportMaxY;
-        }
-    } else {
-        v1 = 0;
-    }
-
-    wmWorldOffsetX = v0;
-    wmWorldOffsetY = v1;
+    wmWorldOffsetX = std::clamp(wmGenData.worldPosX - 203, 0, wmGenData.viewportMaxX);
+    wmWorldOffsetY = std::clamp(wmGenData.worldPosY - 200, 0, wmGenData.viewportMaxY);
 
     wmInterfaceRefresh();
 
@@ -3278,12 +3303,12 @@ static void wmCheckGameEvents()
 // 0x4C0634
 static int wmRndEncounterOccurred()
 {
-    unsigned int v0 = getTicks();
-    if (getTicksBetween(v0, wmLastRndTime) < 1500) {
+    unsigned int now = getTicks();
+    if (getTicksBetween(now, wmLastRndTime) < 1500) {
         return 0;
     }
 
-    wmLastRndTime = v0;
+    wmLastRndTime = now;
 
     if (abs(wmGenData.oldWorldPosX - wmGenData.worldPosX) < 3) {
         return 0;
@@ -3293,9 +3318,9 @@ static int wmRndEncounterOccurred()
         return 0;
     }
 
-    int v26;
-    wmMatchWorldPosToArea(wmGenData.worldPosX, wmGenData.worldPosY, &v26);
-    if (v26 != -1) {
+    int areaIdx;
+    wmMatchWorldPosToArea(wmGenData.worldPosX, wmGenData.worldPosY, &areaIdx);
+    if (areaIdx != -1) {
         return 0;
     }
 
@@ -3303,26 +3328,15 @@ static int wmRndEncounterOccurred()
         unsigned int gameTime = gameTimeGetTime();
         if (gameTime / GAME_TIME_TICKS_PER_DAY > 35) {
             // SFALL: Add a flashing icon to the Horrigan encounter.
-            wmGenData.encounterIconIsVisible = 1;
+            wmBlinkRndEncounterIcon(true);
 
-            for (int index = 0; index < 7; index++) {
-                wmGenData.encounterCursorId = index % 2 == 0
-                    ? WORLD_MAP_ENCOUNTER_FRM_SPECIAL_DARK
-                    : WORLD_MAP_ENCOUNTER_FRM_SPECIAL_BRIGHT;
-
-                if (wmInterfaceRefresh() == -1) {
-                    return -1;
-                }
-
-                renderPresent();
-                inputBlockForTocks(200);
-            }
-
-            wmGenData.encounterMapId = v26;
+            wmGenData.encounterMapId = -1;
             wmGenData.didMeetFrankHorrigan = true;
             if (wmGenData.isInCar) {
                 wmMatchAreaContainingMapIdx(MAP_IN_GAME_MOVIE1, &(wmGenData.currentCarAreaId));
             }
+
+            wmFadeOut();
             mapLoadById(MAP_IN_GAME_MOVIE1);
             return 1;
         }
@@ -3361,25 +3375,19 @@ static int wmRndEncounterOccurred()
 
     wmRndEncounterPick();
 
-    int v8 = 1;
-    wmGenData.encounterIconIsVisible = 1;
-    wmGenData.encounterCursorId = 0;
-
     EncounterTable* encounterTable = &(wmEncounterTableList[wmGenData.encounterTableId]);
-    EncounterEntry* encounter = &(encounterTable->entries[wmGenData.encounterEntryId]);
-    if ((encounter->flags & ENCOUNTER_ENTRY_SPECIAL) != 0) {
-        wmGenData.encounterCursorId = 2;
-        wmMatchAreaContainingMapIdx(wmGenData.encounterMapId, &v26);
+    EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[wmGenData.encounterEntryId]);
+    if ((encounterTableEntry->flags & ENCOUNTER_ENTRY_SPECIAL) != 0) {
+        wmMatchAreaContainingMapIdx(wmGenData.encounterMapId, &areaIdx);
 
-        CityInfo* city = &(wmAreaInfoList[v26]);
+        CityInfo* city = &(wmAreaInfoList[areaIdx]);
         CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
         int worldmapX = wmGenData.worldPosX + wmGenData.hotspotNormalFrmImage.getWidth() / 2 + citySizeDescription->frmImage.getWidth() / 2;
         int worldmapY = wmGenData.worldPosY + wmGenData.hotspotNormalFrmImage.getHeight() / 2 + citySizeDescription->frmImage.getHeight() / 2;
-        wmAreaSetWorldPos(v26, worldmapX, worldmapY);
-        v8 = 3;
+        wmAreaSetWorldPos(areaIdx, worldmapX, worldmapY);
 
-        if (v26 >= 0 && v26 < wmMaxAreaNum) {
-            CityInfo* city = &(wmAreaInfoList[v26]);
+        if (areaIdx >= 0 && areaIdx < wmMaxAreaNum) {
+            CityInfo* city = &(wmAreaInfoList[areaIdx]);
             if (city->lockState != LOCK_STATE_LOCKED) {
                 city->state = CITY_STATE_KNOWN;
             }
@@ -3387,16 +3395,7 @@ static int wmRndEncounterOccurred()
     }
 
     // Blinking.
-    for (int index = 0; index < 7; index++) {
-        wmGenData.encounterCursorId = v8 - wmGenData.encounterCursorId;
-
-        if (wmInterfaceRefresh() == -1) {
-            return -1;
-        }
-
-        renderPresent();
-        inputBlockForTocks(200);
-    }
+    wmBlinkRndEncounterIcon((encounterTableEntry->flags & ENCOUNTER_ENTRY_SPECIAL) != 0);
 
     if (wmGenData.isInCar) {
         int modifiers[DAY_PART_COUNT];
@@ -3443,7 +3442,7 @@ static int wmRndEncounterOccurred()
                 char* text = getmsg(&gMiscMessageList, &messageListItem, 8500);
                 if (strlen(text) < 110) {
                     char formattedText[120];
-                    sprintf(formattedText, text, xpGained);
+                    snprintf(formattedText, sizeof(formattedText), text, xpGained);
                     displayMonitorAddMessage(formattedText);
                 } else {
                     debugPrint("WorldMap: Error: Rnd Encounter string too long!");
@@ -3466,7 +3465,7 @@ static int wmRndEncounterOccurred()
         title = getmsg(&wmMsgFile, &messageListItem, 2999);
         body = getmsg(&wmMsgFile, &messageListItem, 3000 + 50 * wmGenData.encounterTableId + wmGenData.encounterEntryId);
         if (showDialogBox(title, &body, 1, 169, 116, _colorTable[32328], NULL, _colorTable[32328], DIALOG_BOX_LARGE | DIALOG_BOX_YES_NO) == 0) {
-            wmGenData.encounterIconIsVisible = 0;
+            wmGenData.encounterIconIsVisible = false;
             wmGenData.encounterMapId = -1;
             wmGenData.encounterTableId = -1;
             wmGenData.encounterEntryId = -1;
@@ -3525,7 +3524,7 @@ static int wmRndEncounterPick()
     int candidatesLength = 0;
     int totalChance = 0;
     for (int index = 0; index < encounterTable->entriesLength; index++) {
-        EncounterEntry* encounterTableEntry = &(encounterTable->entries[index]);
+        EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[index]);
 
         bool selected = true;
         if (wmEvalConditional(&(encounterTableEntry->condition), NULL) == 0) {
@@ -3542,44 +3541,44 @@ static int wmRndEncounterPick()
         }
     }
 
-    int v1 = critterGetStat(gDude, STAT_LUCK) - 5;
-    int v2 = randomBetween(0, totalChance) + v1;
+    int effectiveLuck = critterGetStat(gDude, STAT_LUCK) - 5;
+    int chance = randomBetween(0, totalChance) + effectiveLuck;
 
     if (perkHasRank(gDude, PERK_EXPLORER)) {
-        v2 += 2;
+        chance += 2;
     }
 
     if (perkHasRank(gDude, PERK_RANGER)) {
-        v2++;
+        chance += 1;
     }
 
     if (perkHasRank(gDude, PERK_SCOUT)) {
-        v2++;
+        chance += 1;
     }
 
     switch (settings.preferences.game_difficulty) {
     case GAME_DIFFICULTY_EASY:
-        v2 += 5;
-        if (v2 > totalChance) {
-            v2 = totalChance;
+        chance += 5;
+        if (chance > totalChance) {
+            chance = totalChance;
         }
         break;
     case GAME_DIFFICULTY_HARD:
-        v2 -= 5;
-        if (v2 < 0) {
-            v2 = 0;
+        chance -= 5;
+        if (chance < 0) {
+            chance = 0;
         }
         break;
     }
 
     int index;
     for (index = 0; index < candidatesLength; index++) {
-        EncounterEntry* encounterTableEntry = &(encounterTable->entries[candidates[index]]);
-        if (v2 < encounterTableEntry->chance) {
+        EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[candidates[index]]);
+        if (chance < encounterTableEntry->chance) {
             break;
         }
 
-        v2 -= encounterTableEntry->chance;
+        chance -= encounterTableEntry->chance;
     }
 
     if (index == candidatesLength) {
@@ -3588,7 +3587,7 @@ static int wmRndEncounterPick()
 
     wmGenData.encounterEntryId = candidates[index];
 
-    EncounterEntry* encounterTableEntry = &(encounterTable->entries[wmGenData.encounterEntryId]);
+    EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[wmGenData.encounterEntryId]);
     if (encounterTableEntry->counter > 0) {
         encounterTableEntry->counter--;
     }
@@ -3619,11 +3618,11 @@ int wmSetupRandomEncounter()
     }
 
     EncounterTable* encounterTable = &(wmEncounterTableList[wmGenData.encounterTableId]);
-    EncounterEntry* encounterTableEntry = &(encounterTable->entries[wmGenData.encounterEntryId]);
+    EncounterTableEntry* encounterTableEntry = &(encounterTable->entries[wmGenData.encounterEntryId]);
 
     // SFALL: Display encounter description in one line.
     char formattedText[512];
-    sprintf(formattedText,
+    snprintf(formattedText, sizeof(formattedText),
         "%s %s",
         getmsg(&wmMsgFile, &messageListItem, 2998),
         getmsg(&wmMsgFile, &messageListItem, 3000 + 50 * wmGenData.encounterTableId + wmGenData.encounterEntryId));
@@ -3642,47 +3641,47 @@ int wmSetupRandomEncounter()
         return -1;
     }
 
-    Object* v0 = NULL;
-    for (int i = 0; i < encounterTableEntry->field_50; i++) {
-        ENCOUNTER_ENTRY_ENC* v3 = &(encounterTableEntry->field_54[i]);
+    Object* prevCritter = NULL;
+    for (int index = 0; index < encounterTableEntry->subEntiesLength; index++) {
+        EncounterTableSubEntry* encounterTableSubEntry = &(encounterTableEntry->subEntries[index]);
 
-        int v9 = randomBetween(v3->minQuantity, v3->maxQuantity);
+        int critterCount = randomBetween(encounterTableSubEntry->minimumCount, encounterTableSubEntry->maximumCount);
 
         switch (gameDifficulty) {
         case GAME_DIFFICULTY_EASY:
-            v9 -= 2;
-            if (v9 < v3->minQuantity) {
-                v9 = v3->minQuantity;
+            critterCount -= 2;
+            if (critterCount < encounterTableSubEntry->minimumCount) {
+                critterCount = encounterTableSubEntry->minimumCount;
             }
             break;
         case GAME_DIFFICULTY_HARD:
-            v9 += 2;
+            critterCount += 2;
             break;
         }
 
         int partyMemberCount = _getPartyMemberCount();
         if (partyMemberCount > 2) {
-            v9 += 2;
+            critterCount += 2;
         }
 
-        if (v9 != 0) {
-            Object* v35;
-            if (wmSetupCritterObjs(v3->field_8, &v35, v9) == -1) {
+        if (critterCount != 0) {
+            Object* critter;
+            if (wmSetupCritterObjs(encounterTableSubEntry->encounterIndex, &critter, critterCount) == -1) {
                 scriptsRequestWorldMap();
                 return -1;
             }
 
-            if (i > 0) {
-                if (v0 != NULL) {
-                    if (v0 != v35) {
-                        if (encounterTableEntry->field_50 != 1) {
-                            if (encounterTableEntry->field_50 == 2 && !isInCombat()) {
-                                v0->data.critter.combat.whoHitMe = v35;
-                                v35->data.critter.combat.whoHitMe = v0;
+            if (index > 0) {
+                if (prevCritter != NULL) {
+                    if (prevCritter != critter) {
+                        if (encounterTableEntry->subEntiesLength != 1) {
+                            if (encounterTableEntry->subEntiesLength == 2 && !isInCombat()) {
+                                prevCritter->data.critter.combat.whoHitMe = critter;
+                                critter->data.critter.combat.whoHitMe = prevCritter;
 
                                 STRUCT_664980 combat;
-                                combat.attacker = v0;
-                                combat.defender = v35;
+                                combat.attacker = prevCritter;
+                                combat.defender = critter;
                                 combat.actionPointsBonus = 0;
                                 combat.accuracyBonus = 0;
                                 combat.damageBonus = 0;
@@ -3690,15 +3689,15 @@ int wmSetupRandomEncounter()
                                 combat.maxDamage = 500;
                                 combat.field_1C = 0;
 
-                                _caiSetupTeamCombat(v35, v0);
+                                _caiSetupTeamCombat(critter, prevCritter);
                                 _scripts_request_combat_locked(&combat);
                             }
                         } else {
                             if (!isInCombat()) {
-                                v0->data.critter.combat.whoHitMe = gDude;
+                                prevCritter->data.critter.combat.whoHitMe = gDude;
 
                                 STRUCT_664980 combat;
-                                combat.attacker = v0;
+                                combat.attacker = prevCritter;
                                 combat.defender = gDude;
                                 combat.actionPointsBonus = 0;
                                 combat.accuracyBonus = 0;
@@ -3707,7 +3706,7 @@ int wmSetupRandomEncounter()
                                 combat.maxDamage = 500;
                                 combat.field_1C = 0;
 
-                                _caiSetupTeamCombat(gDude, v0);
+                                _caiSetupTeamCombat(gDude, prevCritter);
                                 _scripts_request_combat_locked(&combat);
                             }
                         }
@@ -3715,7 +3714,7 @@ int wmSetupRandomEncounter()
                 }
             }
 
-            v0 = v35;
+            prevCritter = critter;
         }
     }
 
@@ -3724,87 +3723,87 @@ int wmSetupRandomEncounter()
 
 // wmSetupCritterObjs
 // 0x4C11FC
-static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCount)
+static int wmSetupCritterObjs(int encounterIndex, Object** critterPtr, int critterCount)
 {
-    if (type_idx == -1) {
+    if (encounterIndex == -1) {
         return 0;
     }
 
-    *critterPtr = 0;
+    *critterPtr = NULL;
 
-    ENC_BASE_TYPE* v25 = &(wmEncBaseTypeList[type_idx]);
+    Encounter* encounter = &(wmEncBaseTypeList[encounterIndex]);
 
-    debugPrint("\nwmSetupCritterObjs: typeIdx: %d, Formation: %s", type_idx, wmFormationStrs[v25->position]);
+    debugPrint("\nwmSetupCritterObjs: typeIdx: %d, Formation: %s", encounterIndex, wmFormationStrs[encounter->position]);
 
-    if (wmSetupRndNextTileNumInit(v25) == -1) {
+    if (wmSetupRndNextTileNumInit(encounter) == -1) {
         return -1;
     }
 
-    for (int i = 0; i < v25->field_34; i++) {
-        ENC_BASE_TYPE_38* v5 = &(v25->field_38[i]);
+    for (int index = 0; index < encounter->entriesLength; index++) {
+        EncounterEntry* encounterEntry = &(encounter->entries[index]);
 
-        if (v5->pid == -1) {
+        if (encounterEntry->pid == -1) {
             continue;
         }
 
-        if (!wmEvalConditional(&(v5->condition), &critterCount)) {
+        if (!wmEvalConditional(&(encounterEntry->condition), &critterCount)) {
             continue;
         }
 
-        int v23;
-        switch (v5->field_2C) {
+        int encounterEntryCritterCount;
+        switch (encounterEntry->field_2C) {
         case 0:
-            v23 = v5->ratio * critterCount / 100;
+            encounterEntryCritterCount = encounterEntry->ratio * critterCount / 100;
             break;
         case 1:
-            v23 = 1;
+            encounterEntryCritterCount = 1;
             break;
         default:
             assert(false && "Should be unreachable");
         }
 
-        if (v23 < 1) {
-            v23 = 1;
+        if (encounterEntryCritterCount < 1) {
+            encounterEntryCritterCount = 1;
         }
 
-        for (int j = 0; j < v23; j++) {
+        for (int critterIndex = 0; critterIndex < encounterEntryCritterCount; critterIndex++) {
             int tile;
-            if (wmSetupRndNextTileNum(v25, v5, &tile) == -1) {
+            if (wmSetupRndNextTileNum(encounter, encounterEntry, &tile) == -1) {
                 debugPrint("\nERROR: wmSetupCritterObjs: wmSetupRndNextTileNum:");
                 continue;
             }
 
-            if (v5->pid == -1) {
+            if (encounterEntry->pid == -1) {
                 continue;
             }
 
             Object* object;
-            if (objectCreateWithPid(&object, v5->pid) == -1) {
+            if (objectCreateWithPid(&object, encounterEntry->pid) == -1) {
                 return -1;
             }
 
             if (*critterPtr == NULL) {
-                if (PID_TYPE(v5->pid) == OBJ_TYPE_CRITTER) {
+                if (PID_TYPE(encounterEntry->pid) == OBJ_TYPE_CRITTER) {
                     *critterPtr = object;
                 }
             }
 
-            if (v5->team != -1) {
+            if (encounterEntry->team != -1) {
                 if (PID_TYPE(object->pid) == OBJ_TYPE_CRITTER) {
-                    object->data.critter.combat.team = v5->team;
+                    object->data.critter.combat.team = encounterEntry->team;
                 }
             }
 
-            if (v5->script != -1) {
+            if (encounterEntry->scriptIdx != -1) {
                 if (object->sid != -1) {
                     scriptRemove(object->sid);
                     object->sid = -1;
                 }
 
-                _obj_new_sid_inst(object, SCRIPT_TYPE_CRITTER, v5->script - 1);
+                _obj_new_sid_inst(object, SCRIPT_TYPE_CRITTER, encounterEntry->scriptIdx - 1);
             }
 
-            if (v25->position != ENCOUNTER_FORMATION_TYPE_SURROUNDING) {
+            if (encounter->position != ENCOUNTER_FORMATION_TYPE_SURROUNDING) {
                 objectSetLocation(object, tile, gElevation, NULL);
             } else {
                 _obj_attempt_placement(object, tile, 0, 0);
@@ -3813,14 +3812,14 @@ static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCoun
             int direction = tileGetRotationTo(tile, gDude->tile);
             objectSetRotation(object, direction, NULL);
 
-            for (int itemIndex = 0; itemIndex < v5->itemsLength; itemIndex++) {
-                ENC_BASE_TYPE_38_48* v10 = &(v5->items[itemIndex]);
+            for (int itemIndex = 0; itemIndex < encounterEntry->itemsLength; itemIndex++) {
+                EncounterItem* encounterItem = &(encounterEntry->items[itemIndex]);
 
                 int quantity;
-                if (v10->maximumQuantity == v10->minimumQuantity) {
-                    quantity = v10->maximumQuantity;
+                if (encounterItem->maximumQuantity == encounterItem->minimumQuantity) {
+                    quantity = encounterItem->maximumQuantity;
                 } else {
-                    quantity = randomBetween(v10->minimumQuantity, v10->maximumQuantity);
+                    quantity = randomBetween(encounterItem->minimumQuantity, encounterItem->maximumQuantity);
                 }
 
                 if (quantity == 0) {
@@ -3828,11 +3827,11 @@ static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCoun
                 }
 
                 Object* item;
-                if (objectCreateWithPid(&item, v10->pid) == -1) {
+                if (objectCreateWithPid(&item, encounterItem->pid) == -1) {
                     return -1;
                 }
 
-                if (v10->pid == PROTO_ID_MONEY) {
+                if (encounterItem->pid == PROTO_ID_MONEY) {
                     if (perkHasRank(gDude, PERK_FORTUNE_FINDER)) {
                         quantity *= 2;
                     }
@@ -3844,7 +3843,7 @@ static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCoun
 
                 _obj_disconnect(item, NULL);
 
-                if (v10->isEquipped) {
+                if (encounterItem->isEquipped) {
                     if (_inven_wield(object, item, 1) == -1) {
                         debugPrint("\nERROR: wmSetupCritterObjs: Inven Wield Failed: %d on %s: Critter Fid: %d", item->pid, critterGetName(object), object->fid);
                     }
@@ -3857,7 +3856,7 @@ static int wmSetupCritterObjs(int type_idx, Object** critterPtr, int critterCoun
 }
 
 // 0x4C155C
-static int wmSetupRndNextTileNumInit(ENC_BASE_TYPE* a1)
+static int wmSetupRndNextTileNumInit(Encounter* encounter)
 {
     for (int index = 0; index < 2; index++) {
         wmRndCenterRotations[index] = 0;
@@ -3873,7 +3872,7 @@ static int wmSetupRndNextTileNumInit(ENC_BASE_TYPE* a1)
 
     wmRndCallCount = 0;
 
-    switch (a1->position) {
+    switch (encounter->position) {
     case ENCOUNTER_FORMATION_TYPE_SURROUNDING:
         wmRndCenterTiles[0] = gDude->tile;
         wmRndTileDirs[0] = randomBetween(0, ROTATION_COUNT - 1);
@@ -3895,7 +3894,7 @@ static int wmSetupRndNextTileNumInit(ENC_BASE_TYPE* a1)
                 wmRndCenterTiles[0] = rsp->tile;
                 wmRndCenterTiles[1] = wmRndCenterTiles[0];
 
-                wmRndCenterRotations[0] = rsp->field_8;
+                wmRndCenterRotations[0] = rsp->rotation;
                 wmRndCenterRotations[1] = wmRndCenterRotations[0];
             } else {
                 wmRndCenterRotations[0] = 0;
@@ -3921,18 +3920,18 @@ static int wmSetupRndNextTileNumInit(ENC_BASE_TYPE* a1)
 
 // wmSetupRndNextTileNum
 // 0x4C16F0
-static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* out_tile_num)
+static int wmSetupRndNextTileNum(Encounter* encounter, EncounterEntry* encounterEntry, int* tilePtr)
 {
-    int tile_num;
+    int tile;
 
     int attempt = 0;
     while (1) {
-        switch (a1->position) {
+        switch (encounter->position) {
         case ENCOUNTER_FORMATION_TYPE_SURROUNDING:
             if (1) {
                 int distance;
-                if (a2->distance != 0) {
-                    distance = a2->distance;
+                if (encounterEntry->distance != 0) {
+                    distance = encounterEntry->distance;
                 } else {
                     distance = randomBetween(-2, 2);
 
@@ -3947,7 +3946,7 @@ static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* o
                     distance = 0;
                 }
 
-                int origin = a2->tile;
+                int origin = encounterEntry->tile;
                 if (origin == -1) {
                     origin = tileGetTileInDirection(gDude->tile, wmRndTileDirs[0], distance);
                 }
@@ -3958,53 +3957,51 @@ static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* o
 
                 int randomizedDistance = randomBetween(0, distance / 2);
                 int randomizedRotation = randomBetween(0, ROTATION_COUNT - 1);
-                tile_num = tileGetTileInDirection(origin, (randomizedRotation + wmRndTileDirs[0]) % ROTATION_COUNT, randomizedDistance);
+                tile = tileGetTileInDirection(origin, (randomizedRotation + wmRndTileDirs[0]) % ROTATION_COUNT, randomizedDistance);
             }
             break;
         case ENCOUNTER_FORMATION_TYPE_STRAIGHT_LINE:
-            tile_num = wmRndCenterTiles[wmRndIndex];
+            tile = wmRndCenterTiles[wmRndIndex];
             if (wmRndCallCount != 0) {
                 int rotation = (wmRndRotOffsets[wmRndIndex] + wmRndTileDirs[wmRndIndex]) % ROTATION_COUNT;
-                int origin = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], rotation, a1->spacing);
-                int v13 = tileGetTileInDirection(origin, (rotation + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, a1->spacing);
-                wmRndCenterTiles[wmRndIndex] = v13;
+                int origin = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], rotation, encounter->spacing);
+                tile = tileGetTileInDirection(origin, (rotation + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, encounter->spacing);
+                wmRndCenterTiles[wmRndIndex] = tile;
                 wmRndIndex = 1 - wmRndIndex;
-                tile_num = v13;
             }
             break;
         case ENCOUNTER_FORMATION_TYPE_DOUBLE_LINE:
-            tile_num = wmRndCenterTiles[wmRndIndex];
+            tile = wmRndCenterTiles[wmRndIndex];
             if (wmRndCallCount != 0) {
                 int rotation = (wmRndRotOffsets[wmRndIndex] + wmRndTileDirs[wmRndIndex]) % ROTATION_COUNT;
-                int origin = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], rotation, a1->spacing);
-                int v17 = tileGetTileInDirection(origin, (rotation + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, a1->spacing);
-                wmRndCenterTiles[wmRndIndex] = v17;
+                int origin = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], rotation, encounter->spacing);
+                tile = tileGetTileInDirection(origin, (rotation + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, encounter->spacing);
+                wmRndCenterTiles[wmRndIndex] = tile;
                 wmRndIndex = 1 - wmRndIndex;
-                tile_num = v17;
             }
             break;
         case ENCOUNTER_FORMATION_TYPE_WEDGE:
-            tile_num = wmRndCenterTiles[wmRndIndex];
+            tile = wmRndCenterTiles[wmRndIndex];
             if (wmRndCallCount != 0) {
-                tile_num = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], (wmRndRotOffsets[wmRndIndex] + wmRndTileDirs[wmRndIndex]) % ROTATION_COUNT, a1->spacing);
-                wmRndCenterTiles[wmRndIndex] = tile_num;
+                tile = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], (wmRndRotOffsets[wmRndIndex] + wmRndTileDirs[wmRndIndex]) % ROTATION_COUNT, encounter->spacing);
+                wmRndCenterTiles[wmRndIndex] = tile;
                 wmRndIndex = 1 - wmRndIndex;
             }
             break;
         case ENCOUNTER_FORMATION_TYPE_CONE:
-            tile_num = wmRndCenterTiles[wmRndIndex];
+            tile = wmRndCenterTiles[wmRndIndex];
             if (wmRndCallCount != 0) {
-                tile_num = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], (wmRndTileDirs[wmRndIndex] + 3 + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, a1->spacing);
-                wmRndCenterTiles[wmRndIndex] = tile_num;
+                tile = tileGetTileInDirection(wmRndCenterTiles[wmRndIndex], (wmRndTileDirs[wmRndIndex] + 3 + wmRndRotOffsets[wmRndIndex]) % ROTATION_COUNT, encounter->spacing);
+                wmRndCenterTiles[wmRndIndex] = tile;
                 wmRndIndex = 1 - wmRndIndex;
             }
             break;
         case ENCOUNTER_FORMATION_TYPE_HUDDLE:
-            tile_num = wmRndCenterTiles[0];
+            tile = wmRndCenterTiles[0];
             if (wmRndCallCount != 0) {
                 wmRndTileDirs[0] = (wmRndTileDirs[0] + 1) % ROTATION_COUNT;
-                tile_num = tileGetTileInDirection(wmRndCenterTiles[0], wmRndTileDirs[0], a1->spacing);
-                wmRndCenterTiles[0] = tile_num;
+                tile = tileGetTileInDirection(wmRndCenterTiles[0], wmRndTileDirs[0], encounter->spacing);
+                wmRndCenterTiles[0] = tile;
             }
             break;
         default:
@@ -4014,7 +4011,7 @@ static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* o
         ++attempt;
         ++wmRndCallCount;
 
-        if (wmEvalTileNumForPlacement(tile_num)) {
+        if (wmEvalTileNumForPlacement(tile)) {
             break;
         }
 
@@ -4029,9 +4026,9 @@ static int wmSetupRndNextTileNum(ENC_BASE_TYPE* a1, ENC_BASE_TYPE_38* a2, int* o
         }
     }
 
-    debugPrint("\nwmSetupRndNextTileNum:TileNum: %d", tile_num);
+    debugPrint("\nwmSetupRndNextTileNum:TileNum: %d", tile);
 
-    *out_tile_num = tile_num;
+    *tilePtr = tile;
 
     return 0;
 }
@@ -4051,48 +4048,48 @@ bool wmEvalTileNumForPlacement(int tile)
 }
 
 // 0x4C1AC8
-static bool wmEvalConditional(EncounterCondition* a1, int* a2)
+static bool wmEvalConditional(EncounterCondition* condition, int* critterCountPtr)
 {
     int value;
 
     bool matches = true;
-    for (int index = 0; index < a1->entriesLength; index++) {
-        EncounterConditionEntry* ptr = &(a1->entries[index]);
+    for (int index = 0; index < condition->entriesLength; index++) {
+        EncounterConditionEntry* conditionEntry = &(condition->entries[index]);
 
         matches = true;
-        switch (ptr->type) {
+        switch (conditionEntry->type) {
         case ENCOUNTER_CONDITION_TYPE_GLOBAL:
-            value = gameGetGlobalVar(ptr->param);
-            if (!wmEvalSubConditional(value, ptr->conditionalOperator, ptr->value)) {
+            value = gameGetGlobalVar(conditionEntry->param);
+            if (!wmEvalSubConditional(value, conditionEntry->conditionalOperator, conditionEntry->value)) {
                 matches = false;
             }
             break;
         case ENCOUNTER_CONDITION_TYPE_NUMBER_OF_CRITTERS:
-            if (!wmEvalSubConditional(*a2, ptr->conditionalOperator, ptr->value)) {
+            if (!wmEvalSubConditional(*critterCountPtr, conditionEntry->conditionalOperator, conditionEntry->value)) {
                 matches = false;
             }
             break;
         case ENCOUNTER_CONDITION_TYPE_RANDOM:
             value = randomBetween(0, 100);
-            if (value > ptr->param) {
+            if (value > conditionEntry->param) {
                 matches = false;
             }
             break;
         case ENCOUNTER_CONDITION_TYPE_PLAYER:
             value = pcGetStat(PC_STAT_LEVEL);
-            if (!wmEvalSubConditional(value, ptr->conditionalOperator, ptr->value)) {
+            if (!wmEvalSubConditional(value, conditionEntry->conditionalOperator, conditionEntry->value)) {
                 matches = false;
             }
             break;
         case ENCOUNTER_CONDITION_TYPE_DAYS_PLAYED:
             value = gameTimeGetTime();
-            if (!wmEvalSubConditional(value / GAME_TIME_TICKS_PER_DAY, ptr->conditionalOperator, ptr->value)) {
+            if (!wmEvalSubConditional(value / GAME_TIME_TICKS_PER_DAY, conditionEntry->conditionalOperator, conditionEntry->value)) {
                 matches = false;
             }
             break;
         case ENCOUNTER_CONDITION_TYPE_TIME_OF_DAY:
             value = gameTimeGetHour();
-            if (!wmEvalSubConditional(value / 100, ptr->conditionalOperator, ptr->value)) {
+            if (!wmEvalSubConditional(value / 100, conditionEntry->conditionalOperator, conditionEntry->value)) {
                 matches = false;
             }
             break;
@@ -4100,7 +4097,7 @@ static bool wmEvalConditional(EncounterCondition* a1, int* a2)
 
         if (!matches) {
             // FIXME: Can overflow with all 3 conditions specified.
-            if (a1->logicalOperators[index] == ENCOUNTER_LOGICAL_OPERATOR_AND) {
+            if (condition->logicalOperators[index] == ENCOUNTER_LOGICAL_OPERATOR_AND) {
                 break;
             }
         }
@@ -4142,10 +4139,10 @@ static bool wmGameTimeIncrement(int ticksToAdd)
     while (ticksToAdd != 0) {
         unsigned int gameTime = gameTimeGetTime();
         unsigned int nextEventTime = queueGetNextEventTime();
-        int v1 = nextEventTime >= gameTime ? ticksToAdd : nextEventTime - gameTime;
-        ticksToAdd -= v1;
+        int ticksToNextEvent = nextEventTime >= gameTime ? ticksToAdd : nextEventTime - gameTime;
+        ticksToAdd -= ticksToNextEvent;
 
-        gameTimeAddTicks(v1);
+        gameTimeAddTicks(ticksToNextEvent);
 
         // NOTE: Uninline.
         wmInterfaceDialSyncTime(true);
@@ -4180,7 +4177,7 @@ static int wmGrabTileWalkMask(int tileIdx)
     }
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "data\\%s.msk", tileInfo->walkMaskName);
+    snprintf(path, sizeof(path), "data\\%s.msk", tileInfo->walkMaskName);
 
     File* stream = fileOpen(path, "rb");
     if (stream == NULL) {
@@ -4289,8 +4286,6 @@ static void wmPartyWalkingStep()
     }
 
     if (_terrainCounter / terrainDifficulty >= 1) {
-        int v3;
-        int v4;
         if (wmGenData.walkLineDelta >= 0) {
             if (wmWorldPosInvalid(wmGenData.walkWorldPosCrossAxisStepX + wmGenData.worldPosX, wmGenData.walkWorldPosCrossAxisStepY + wmGenData.worldPosY)) {
                 wmGenData.walkDestinationX = 0;
@@ -4301,11 +4296,16 @@ static void wmPartyWalkingStep()
                 return;
             }
 
-            v3 = wmGenData.walkWorldPosCrossAxisStepX;
             wmGenData.walkLineDelta += wmGenData.walkLineDeltaCrossAxisStep;
             wmGenData.worldPosX += wmGenData.walkWorldPosCrossAxisStepX;
-            v4 = wmGenData.walkWorldPosCrossAxisStepY;
             wmGenData.worldPosY += wmGenData.walkWorldPosCrossAxisStepY;
+
+            wmInterfaceScrollPixel(1,
+                1,
+                wmGenData.walkWorldPosCrossAxisStepX,
+                wmGenData.walkWorldPosCrossAxisStepY,
+                NULL,
+                false);
         } else {
             if (wmWorldPosInvalid(wmGenData.walkWorldPosMainAxisStepX + wmGenData.worldPosX, wmGenData.walkWorldPosMainAxisStepY + wmGenData.worldPosY) == 1) {
                 wmGenData.walkDestinationX = 0;
@@ -4316,14 +4316,17 @@ static void wmPartyWalkingStep()
                 return;
             }
 
-            v3 = wmGenData.walkWorldPosMainAxisStepX;
             wmGenData.walkLineDelta += wmGenData.walkLineDeltaMainAxisStep;
             wmGenData.worldPosY += wmGenData.walkWorldPosMainAxisStepY;
-            v4 = wmGenData.walkWorldPosMainAxisStepY;
             wmGenData.worldPosX += wmGenData.walkWorldPosMainAxisStepX;
-        }
 
-        wmInterfaceScrollPixel(1, 1, v3, v4, NULL, false);
+            wmInterfaceScrollPixel(1,
+                1,
+                wmGenData.walkWorldPosMainAxisStepX,
+                wmGenData.walkWorldPosMainAxisStepY,
+                NULL,
+                false);
+        }
 
         wmGenData.walkDistance -= 1;
         if (wmGenData.walkDistance == 0) {
@@ -4337,39 +4340,23 @@ static void wmPartyWalkingStep()
 // 0x4C219C
 static void wmInterfaceScrollTabsStart(int delta)
 {
-    int i;
-    int v3;
-
-    for (i = 0; i < 7; i++) {
-        buttonDisable(wmTownMapSubButtonIds[i]);
+    for (int index = 0; index < 7; index++) {
+        buttonDisable(wmTownMapSubButtonIds[index]);
     }
 
     wmGenData.oldTabsOffsetY = wmGenData.tabsOffsetY;
 
-    v3 = wmGenData.tabsOffsetY + 7 * delta;
-
     if (delta >= 0) {
-        if (wmGenData.tabsBackgroundFrmImage.getHeight() - 230 <= wmGenData.oldTabsOffsetY) {
-            goto L11;
-        } else {
-            wmGenData.oldTabsOffsetY = wmGenData.tabsOffsetY + 7 * delta;
-            if (v3 > wmGenData.tabsBackgroundFrmImage.getHeight() - 230) {
-            }
+        if (wmGenData.oldTabsOffsetY < wmGenData.tabsBackgroundFrmImage.getHeight() - 230) {
+            wmGenData.oldTabsOffsetY = std::min(wmGenData.tabsOffsetY + 7 * delta, wmGenData.tabsBackgroundFrmImage.getHeight() - 230);
+            wmGenData.tabsScrollingDelta = delta;
         }
     } else {
-        if (wmGenData.tabsOffsetY <= 0) {
-            goto L11;
-        } else {
-            wmGenData.oldTabsOffsetY = wmGenData.tabsOffsetY + 7 * delta;
-            if (v3 < 0) {
-                wmGenData.oldTabsOffsetY = 0;
-            }
+        if (wmGenData.tabsOffsetY > 0) {
+            wmGenData.oldTabsOffsetY = std::max(wmGenData.tabsOffsetY + 7 * delta, 0);
+            wmGenData.tabsScrollingDelta = delta;
         }
     }
-
-    wmGenData.tabsScrollingDelta = delta;
-
-L11:
 
     // NOTE: Uninline.
     wmInterfaceScrollTabsUpdate();
@@ -4378,12 +4365,10 @@ L11:
 // 0x4C2270
 static void wmInterfaceScrollTabsStop()
 {
-    int i;
-
     wmGenData.tabsScrollingDelta = 0;
 
-    for (i = 0; i < 7; i++) {
-        buttonEnable(wmTownMapSubButtonIds[i]);
+    for (int index = 0; index < 7; index++) {
+        buttonEnable(wmTownMapSubButtonIds[index]);
     }
 }
 
@@ -4394,7 +4379,7 @@ static void wmInterfaceScrollTabsUpdate()
 {
     if (wmGenData.tabsScrollingDelta != 0) {
         wmGenData.tabsOffsetY += wmGenData.tabsScrollingDelta;
-        wmRefreshInterfaceOverlay(1);
+        wmRefreshInterfaceOverlay(true);
 
         if (wmGenData.tabsScrollingDelta >= 0) {
             if (wmGenData.oldTabsOffsetY <= wmGenData.tabsOffsetY) {
@@ -4428,14 +4413,29 @@ static int wmInterfaceInit()
     const char* backgroundSoundFileName = wmGenData.isInCar ? "20car" : "23world";
     _gsound_background_play_level_music(backgroundSoundFileName, 12);
 
-    indicatorBarHide();
+    // CE: Hide entire interface, not just indicator bar, and disable tile
+    // engine.
+    interfaceBarHide();
+    tileDisable();
     isoDisable();
     colorCycleDisable();
     gameMouseSetCursor(MOUSE_CURSOR_ARROW);
 
+    // CE: Clear map window.
+    windowFill(gIsoWindow,
+        0,
+        0,
+        windowGetWidth(gIsoWindow),
+        windowGetHeight(gIsoWindow),
+        _colorTable[0]);
+    windowRefresh(gIsoWindow);
+
+    // CE: Stop all animations.
+    animationStop();
+
     int worldmapWindowX = (screenGetWidth() - WM_WINDOW_WIDTH) / 2;
     int worldmapWindowY = (screenGetHeight() - WM_WINDOW_HEIGHT) / 2;
-    wmBkWin = windowCreate(worldmapWindowX, worldmapWindowY, WM_WINDOW_WIDTH, WM_WINDOW_HEIGHT, _colorTable[0], WINDOW_FLAG_0x04);
+    wmBkWin = windowCreate(worldmapWindowX, worldmapWindowY, WM_WINDOW_WIDTH, WM_WINDOW_HEIGHT, _colorTable[0], WINDOW_MOVE_ON_TOP);
     if (wmBkWin == -1) {
         return -1;
     }
@@ -4459,11 +4459,7 @@ static int wmInterfaceInit()
 
     for (int citySize = 0; citySize < CITY_SIZE_COUNT; citySize++) {
         CitySizeDescription* citySizeDescription = &(wmSphereData[citySize]);
-
-        fid = buildFid(OBJ_TYPE_INTERFACE, 336 + citySize, 0, 0, 0);
-        citySizeDescription->fid = fid;
-
-        if (!citySizeDescription->frmImage.lock(fid)) {
+        if (!citySizeDescription->frmImage.lock(citySizeDescription->fid)) {
             return -1;
         }
     }
@@ -4648,8 +4644,8 @@ static int wmInterfaceInit()
         -1,
         -1,
         KEY_CTRL_ARROW_DOWN,
-        wmGenData.scrollUpButtonFrmImages[WORLDMAP_ARROW_FRM_NORMAL].getData(),
-        wmGenData.scrollUpButtonFrmImages[WORLDMAP_ARROW_FRM_PRESSED].getData(),
+        wmGenData.scrollDownButtonFrmImages[WORLDMAP_ARROW_FRM_NORMAL].getData(),
+        wmGenData.scrollDownButtonFrmImages[WORLDMAP_ARROW_FRM_PRESSED].getData(),
         NULL,
         BUTTON_FLAG_TRANSPARENT);
 
@@ -4765,12 +4761,14 @@ static int wmInterfaceExit()
         wmGenData.carImageFrmHeight = 0;
     }
 
-    wmGenData.encounterIconIsVisible = 0;
+    wmGenData.encounterIconIsVisible = false;
     wmGenData.encounterMapId = -1;
     wmGenData.encounterTableId = -1;
     wmGenData.encounterEntryId = -1;
 
-    indicatorBarShow();
+    // CE: Enable tile engine and interface.
+    interfaceBarShow();
+    tileEnable();
     isoEnable();
     colorCycleEnable();
 
@@ -4803,18 +4801,15 @@ static int wmInterfaceScroll(int dx, int dy, bool* successPtr)
 // 0x4C3200
 static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* success, bool shouldRefresh)
 {
-    int v6 = wmWorldOffsetY;
-    int v7 = wmWorldOffsetX;
-
     if (success != NULL) {
         *success = true;
     }
 
     if (dy < 0) {
-        if (v6 > 0) {
-            v6 -= stepY;
-            if (v6 < 0) {
-                v6 = 0;
+        if (wmWorldOffsetY > 0) {
+            wmWorldOffsetY -= stepY;
+            if (wmWorldOffsetY < 0) {
+                wmWorldOffsetY = 0;
             }
         } else {
             if (success != NULL) {
@@ -4822,10 +4817,10 @@ static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* su
             }
         }
     } else if (dy > 0) {
-        if (v6 < wmGenData.viewportMaxY) {
-            v6 += stepY;
-            if (v6 > wmGenData.viewportMaxY) {
-                v6 = wmGenData.viewportMaxY;
+        if (wmWorldOffsetY < wmGenData.viewportMaxY) {
+            wmWorldOffsetY += stepY;
+            if (wmWorldOffsetY > wmGenData.viewportMaxY) {
+                wmWorldOffsetY = wmGenData.viewportMaxY;
             }
         } else {
             if (success != NULL) {
@@ -4835,10 +4830,10 @@ static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* su
     }
 
     if (dx < 0) {
-        if (v7 > 0) {
-            v7 -= stepX;
-            if (v7 < 0) {
-                v7 = 0;
+        if (wmWorldOffsetX > 0) {
+            wmWorldOffsetX -= stepX;
+            if (wmWorldOffsetX < 0) {
+                wmWorldOffsetX = 0;
             }
         } else {
             if (success != NULL) {
@@ -4846,10 +4841,10 @@ static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* su
             }
         }
     } else if (dx > 0) {
-        if (v7 < wmGenData.viewportMaxX) {
-            v7 += stepX;
-            if (v7 > wmGenData.viewportMaxX) {
-                v7 = wmGenData.viewportMaxX;
+        if (wmWorldOffsetX < wmGenData.viewportMaxX) {
+            wmWorldOffsetX += stepX;
+            if (wmWorldOffsetX > wmGenData.viewportMaxX) {
+                wmWorldOffsetX = wmGenData.viewportMaxX;
             }
         } else {
             if (success != NULL) {
@@ -4857,9 +4852,6 @@ static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* su
             }
         }
     }
-
-    wmWorldOffsetY = v6;
-    wmWorldOffsetX = v7;
 
     if (shouldRefresh) {
         if (wmInterfaceRefresh() == -1) {
@@ -4873,19 +4865,25 @@ static int wmInterfaceScrollPixel(int stepX, int stepY, int dx, int dy, bool* su
 // 0x4C32EC
 static void wmMouseBkProc()
 {
+    // 0x51DEB0
+    static unsigned int lastTime = 0;
+
+    // 0x51DEB4
+    static bool couldScroll = true;
+
     int x;
     int y;
-    mouseGetPositionInWindow(wmBkWin, &x, &y);
+    mouseGetPosition(&x, &y);
 
     int dx = 0;
-    if (x == 639) {
+    if (x == screenGetWidth() - 1) {
         dx = 1;
     } else if (x == 0) {
         dx = -1;
     }
 
     int dy = 0;
-    if (y == 479) {
+    if (y == screenGetHeight() - 1) {
         dy = 1;
     } else if (y == 0) {
         dy = -1;
@@ -4920,13 +4918,13 @@ static void wmMouseBkProc()
         }
 
         unsigned int tick = _get_bk_time();
-        if (getTicksBetween(tick, _lastTime_2) > 50) {
-            _lastTime_2 = _get_bk_time();
+        if (getTicksBetween(tick, lastTime) > 50) {
+            lastTime = _get_bk_time();
             // NOTE: Uninline.
-            wmInterfaceScroll(dx, dy, &_couldScroll);
+            wmInterfaceScroll(dx, dy, &couldScroll);
         }
 
-        if (!_couldScroll) {
+        if (!couldScroll) {
             newMouseCursor += 8;
         }
     } else {
@@ -5050,14 +5048,14 @@ int wmSubTileMarkRadiusVisited(int x, int y, int radius)
     subtile = &(wmTileInfoList[tile].subtiles[subtileY][subtileX]);
     subtile->state = SUBTILE_STATE_VISITED;
 
-    switch (subtile->field_4) {
-    case 2:
+    switch (subtile->fill) {
+    case SUBTILE_FILL_S:
         while (subtileY-- > 0) {
             // NOTE: Uninline.
             wmMarkSubTileOffsetVisited(tile, subtileX, subtileY, 0, 0);
         }
         break;
-    case 4:
+    case SUBTILE_FILL_W:
         while (subtileX-- >= 0) {
             // NOTE: Uninline.
             wmMarkSubTileOffsetVisited(tile, subtileX, subtileY, 0, 0);
@@ -5370,7 +5368,7 @@ static int wmInterfaceDrawCircleOverlay(CityInfo* city, CitySizeDescription* cit
             name,
             width,
             WM_WINDOW_WIDTH,
-            _colorTable[992]);
+            _colorTable[992] | FONT_SHADOW);
     }
 
     return 0;
@@ -5386,9 +5384,8 @@ static void wmInterfaceDrawSubTileRectFogged(unsigned char* dest, int width, int
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-            unsigned char byte = *dest;
-            unsigned int index = (byte << 8) + 75;
-            *dest++ = _intensityColorTable[index];
+            unsigned char color = *dest;
+            *dest++ = intensityColorTable[color][75];
         }
         dest += skipY;
     }
@@ -5450,7 +5447,7 @@ static int wmDrawCursorStopped()
 
     if (wmGenData.walkDestinationX >= 1 || wmGenData.walkDestinationY >= 1) {
 
-        if (wmGenData.encounterIconIsVisible == 1) {
+        if (wmGenData.encounterIconIsVisible) {
             src = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getData();
             width = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getWidth();
             height = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getHeight();
@@ -5475,7 +5472,7 @@ static int wmDrawCursorStopped()
                 WM_WINDOW_WIDTH);
         }
     } else {
-        if (wmGenData.encounterIconIsVisible == 1) {
+        if (wmGenData.encounterIconIsVisible) {
             src = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getData();
             width = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getWidth();
             height = wmGenData.encounterCursorFrmImages[wmGenData.encounterCursorId].getHeight();
@@ -5600,7 +5597,7 @@ bool wmAreaMarkVisitedState(int areaIdx, int state)
     }
 
     CityInfo* city = &(wmAreaInfoList[areaIdx]);
-    int v5 = city->visitedState;
+    int oldVisitedState = city->visitedState;
     if (city->state == CITY_STATE_KNOWN && state != 0) {
         wmMarkSubTileRadiusVisited(city->x, city->y);
     }
@@ -5614,7 +5611,7 @@ bool wmAreaMarkVisitedState(int areaIdx, int state)
 
     if (state == 1) {
         subtile->state = SUBTILE_STATE_KNOWN;
-    } else if (state == 2 && v5 == 0) {
+    } else if (state == 2 && oldVisitedState == 0) {
         city->visitedState = 1;
     }
 
@@ -5896,7 +5893,12 @@ static int wmTownMapRefresh()
             if (messageListItem.text != NULL) {
                 int width = fontGetStringWidth(messageListItem.text);
                 // CE: Slightly increase whitespace between marker and entrance name.
-                windowDrawText(wmBkWin, messageListItem.text, width, wmGenData.hotspotNormalFrmImage.getWidth() / 2 + entrance->x - width / 2, wmGenData.hotspotNormalFrmImage.getHeight() + entrance->y + 4, _colorTable[992] | 0x2010000);
+                windowDrawText(wmBkWin,
+                    messageListItem.text,
+                    width,
+                    wmGenData.hotspotNormalFrmImage.getWidth() / 2 + entrance->x - width / 2,
+                    wmGenData.hotspotNormalFrmImage.getHeight() + entrance->y + 4,
+                    _colorTable[992] | 0x2000000 | FONT_SHADOW);
             }
         }
     }
@@ -6081,14 +6083,15 @@ int wmSfxIdxName(int sfxIdx, char** namePtr)
     MapAmbientSoundEffectInfo* ambientSoundEffectInfo = &(map->ambientSoundEffects[sfxIdx]);
     *namePtr = ambientSoundEffectInfo->name;
 
-    int v1 = 0;
+    // Remap bird sounds for night.
+    int remapped = 0;
     if (strcmp(ambientSoundEffectInfo->name, "brdchir1") == 0) {
-        v1 = 1;
+        remapped = 1;
     } else if (strcmp(ambientSoundEffectInfo->name, "brdchirp") == 0) {
-        v1 = 2;
+        remapped = 2;
     }
 
-    if (v1 != 0) {
+    if (remapped != 0) {
         int dayPart;
 
         int gameTimeHour = gameTimeGetHour();
@@ -6101,7 +6104,7 @@ int wmSfxIdxName(int sfxIdx, char** namePtr)
         }
 
         if (dayPart == DAY_PART_NIGHT) {
-            *namePtr = wmRemapSfxList[v1 - 1];
+            *namePtr = wmRemapSfxList[remapped - 1];
         }
     }
 
@@ -6197,16 +6200,12 @@ static int wmRefreshTabs()
     unsigned char* v0;
     int v31;
     CityInfo* city;
-    Art* art;
-    CacheEntry* cache_entry;
-    int width;
-    int height;
-    unsigned char* buf;
     int v10;
     unsigned char* v11;
     unsigned char* v12;
     int v32;
     unsigned char* v13;
+    FrmImage labelFrm;
 
     blitBufferToBufferTrans(wmGenData.tabsBackgroundFrmImage.getData() + wmGenData.tabsBackgroundFrmImage.getWidth() * wmGenData.tabsOffsetY + 9,
         119,
@@ -6222,29 +6221,26 @@ static int wmRefreshTabs()
     if (v31 < wmLabelCount) {
         city = &(wmAreaInfoList[wmLabelList[v31]]);
         if (city->labelFid != -1) {
-            art = artLock(city->labelFid, &cache_entry);
-            if (art == NULL) {
+            if (!labelFrm.lock(city->labelFid)) {
                 return -1;
             }
 
-            width = artGetWidth(art, 0, 0);
-            height = artGetHeight(art, 0, 0);
-            buf = artGetFrameData(art, 0, 0);
-            if (buf == NULL) {
-                return -1;
-            }
-
-            v10 = height - wmGenData.tabsOffsetY % 27;
-            v11 = buf + width * (wmGenData.tabsOffsetY % 27);
+            v10 = labelFrm.getHeight() - wmGenData.tabsOffsetY % 27;
+            v11 = labelFrm.getData() + labelFrm.getWidth() * (wmGenData.tabsOffsetY % 27);
 
             v12 = v0;
             if (v0 < v30 - WM_WINDOW_WIDTH) {
                 v12 = v30 - WM_WINDOW_WIDTH;
             }
 
-            blitBufferToBuffer(v11, width, v10, width, v12, WM_WINDOW_WIDTH);
-            artUnlock(cache_entry);
-            cache_entry = INVALID_CACHE_ENTRY;
+            blitBufferToBuffer(v11,
+                labelFrm.getWidth(),
+                v10,
+                labelFrm.getWidth(),
+                v12,
+                WM_WINDOW_WIDTH);
+
+            labelFrm.unlock();
         }
     }
 
@@ -6255,22 +6251,18 @@ static int wmRefreshTabs()
         if (v14 < wmLabelCount) {
             city = &(wmAreaInfoList[wmLabelList[v14]]);
             if (city->labelFid != -1) {
-                art = artLock(city->labelFid, &cache_entry);
-                if (art == NULL) {
+                if (!labelFrm.lock(city->labelFid)) {
                     return -1;
                 }
 
-                width = artGetWidth(art, 0, 0);
-                height = artGetHeight(art, 0, 0);
-                buf = artGetFrameData(art, 0, 0);
-                if (buf == NULL) {
-                    return -1;
-                }
+                blitBufferToBuffer(labelFrm.getData(),
+                    labelFrm.getWidth(),
+                    labelFrm.getHeight(),
+                    labelFrm.getWidth(),
+                    v13,
+                    WM_WINDOW_WIDTH);
 
-                blitBufferToBuffer(buf, width, height, width, v13, WM_WINDOW_WIDTH);
-                artUnlock(cache_entry);
-
-                cache_entry = INVALID_CACHE_ENTRY;
+                labelFrm.unlock();
             }
         }
         v13 += WM_WINDOW_WIDTH * 27;
@@ -6279,26 +6271,27 @@ static int wmRefreshTabs()
     if (v31 + 6 < wmLabelCount) {
         city = &(wmAreaInfoList[wmLabelList[v31 + 6]]);
         if (city->labelFid != -1) {
-            art = artLock(city->labelFid, &cache_entry);
-            if (art == NULL) {
+            if (!labelFrm.lock(city->labelFid)) {
                 return -1;
             }
 
-            width = artGetWidth(art, 0, 0);
-            height = artGetHeight(art, 0, 0);
-            buf = artGetFrameData(art, 0, 0);
-            if (buf == NULL) {
-                return -1;
-            }
+            blitBufferToBuffer(labelFrm.getData(),
+                labelFrm.getWidth(),
+                labelFrm.getHeight() - 5,
+                labelFrm.getWidth(),
+                v13,
+                WM_WINDOW_WIDTH);
 
-            blitBufferToBuffer(buf, width, height, width, v13, WM_WINDOW_WIDTH);
-            artUnlock(cache_entry);
-
-            cache_entry = INVALID_CACHE_ENTRY;
+            labelFrm.unlock();
         }
     }
 
-    blitBufferToBufferTrans(wmGenData.tabsBorderFrmImage.getData(), 119, 178, 119, wmBkWinBuf + WM_WINDOW_WIDTH * 135 + 501, WM_WINDOW_WIDTH);
+    blitBufferToBufferTrans(wmGenData.tabsBorderFrmImage.getData(),
+        119,
+        178,
+        119,
+        wmBkWinBuf + WM_WINDOW_WIDTH * 135 + 501,
+        WM_WINDOW_WIDTH);
 
     return 0;
 }
@@ -6351,11 +6344,11 @@ static int wmMakeTabsLabelList(int** quickDestinationsPtr, int* quickDestination
 // 0x4C56C8
 static int wmTabsCompareNames(const void* a1, const void* a2)
 {
-    int v1 = *(int*)a1;
-    int v2 = *(int*)a2;
+    int index1 = *(int*)a1;
+    int index2 = *(int*)a2;
 
-    CityInfo* city1 = &(wmAreaInfoList[v1]);
-    CityInfo* city2 = &(wmAreaInfoList[v2]);
+    CityInfo* city1 = &(wmAreaInfoList[index1]);
+    CityInfo* city2 = &(wmAreaInfoList[index2]);
 
     return compat_stricmp(city1->name, city2->name);
 }
@@ -6530,10 +6523,84 @@ int wmTeleportToArea(int areaIdx)
     // locations.
     // CE: See `wmWorldMapFunc` for explanation.
     CitySizeDescription* citySizeDescription = &(wmSphereData[city->size]);
+
+    // CE: This function might be called outside |wmWorldmapFunc|, so it's
+    // image might not be locked.
+    bool wasLocked = citySizeDescription->frmImage.isLocked();
+    if (!wasLocked) {
+        citySizeDescription->frmImage.lock(citySizeDescription->fid);
+    }
+
     wmGenData.worldPosX = city->x + citySizeDescription->frmImage.getWidth() / 2 - WM_VIEW_X;
     wmGenData.worldPosY = city->y + citySizeDescription->frmImage.getHeight() / 2 - WM_VIEW_Y;
 
+    if (!wasLocked) {
+        citySizeDescription->frmImage.unlock();
+    }
+
     return 0;
+}
+
+void wmFadeOut()
+{
+    if (!wmFaded) {
+        paletteFadeTo(gPaletteBlack);
+        wmFaded = true;
+    }
+}
+
+void wmFadeIn()
+{
+    if (wmFaded) {
+        paletteFadeTo(_cmap);
+        wmFaded = false;
+    }
+}
+
+void wmFadeReset()
+{
+    wmFaded = false;
+    paletteSetEntries(_cmap);
+}
+
+void wmBlinkRndEncounterIcon(bool special)
+{
+    wmGenData.encounterIconIsVisible = true;
+
+    // CE: Original code cycles circled bright and non-circled dark icons.
+    int dark;
+    int bright;
+    if (special) {
+        dark = WORLD_MAP_ENCOUNTER_FRM_SPECIAL_DARK;
+        bright = WORLD_MAP_ENCOUNTER_FRM_SPECIAL_BRIGHT;
+    } else {
+        dark = WORLD_MAP_ENCOUNTER_FRM_RANDOM_DARK;
+        bright = WORLD_MAP_ENCOUNTER_FRM_RANDOM_BRIGHT;
+    }
+
+    for (int index = 0; index < 7; index++) {
+        wmGenData.encounterCursorId = index % 2 == 0 ? dark : bright;
+
+        if (wmInterfaceRefresh() == -1) {
+            return;
+        }
+
+        renderPresent();
+        inputBlockForTocks(200);
+    }
+
+    wmGenData.encounterIconIsVisible = false;
+}
+
+void wmSetPartyWorldPos(int x, int y)
+{
+    wmGenData.worldPosX = x;
+    wmGenData.worldPosY = y;
+}
+
+void wmCarSetCurrentArea(int area)
+{
+    wmGenData.currentCarAreaId = area;
 }
 
 } // namespace fallout

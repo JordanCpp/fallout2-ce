@@ -36,6 +36,7 @@
 #include "reaction.h"
 #include "scripts.h"
 #include "settings.h"
+#include "sfall_opcodes.h"
 #include "skill.h"
 #include "stat.h"
 #include "svga.h"
@@ -342,42 +343,6 @@ static void opGetPcStat(Program* program);
 // 0x504B0C
 static char _aCritter[] = "<Critter>";
 
-// Maps light level to light intensity.
-//
-// Middle value is mapped one-to-one which corresponds to 50% light level
-// (cavern lighting). Light levels above (51-100%) and below (0-49) is
-// calculated as percentage from two adjacent light values.
-//
-// See [opSetLightLevel] for math.
-//
-// 0x453F90
-static const int dword_453F90[3] = {
-    0x4000,
-    0xA000,
-    0x10000,
-};
-
-// 0x453F9C
-static const unsigned short word_453F9C[MOVIE_COUNT] = {
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-    GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
-};
-
 // 0x453FC0
 static Rect stru_453FC0 = { 0, 0, 640, 480 };
 
@@ -415,7 +380,7 @@ static void scriptPredefinedError(Program* program, const char* name, int error)
 {
     char string[260];
 
-    sprintf(string, "Script Error: %s: op_%s: %s", program->name, name, _dbg_error_strs[error]);
+    snprintf(string, sizeof(string), "Script Error: %s: op_%s: %s", program->name, name, _dbg_error_strs[error]);
 
     debugPrint(string);
 }
@@ -427,7 +392,7 @@ static void scriptError(const char* format, ...)
 
     va_list argptr;
     va_start(argptr, format);
-    vsprintf(string, format, argptr);
+    vsnprintf(string, sizeof(string), format, argptr);
     va_end(argptr);
 
     debugPrint(string);
@@ -545,7 +510,7 @@ static void opSetMapStart(Program* program)
     }
 
     int tile = 200 * y + x;
-    if (tileSetCenter(tile, TILE_SET_CENTER_FLAG_0x01 | TILE_SET_CENTER_FLAG_0x02) != 0) {
+    if (tileSetCenter(tile, TILE_SET_CENTER_REFRESH_WINDOW | TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS) != 0) {
         scriptError("\nScript Error: %s: op_set_map_start: tile_set_center failed", program->name);
         return;
     }
@@ -565,7 +530,7 @@ static void opOverrideMapStart(Program* program)
     int x = programStackPopInteger(program);
 
     char text[60];
-    sprintf(text, "OVERRIDE_MAP_START: x: %d, y: %d", x, y);
+    snprintf(text, sizeof(text), "OVERRIDE_MAP_START: x: %d, y: %d", x, y);
     debugPrint(text);
 
     int tile = 200 * y + x;
@@ -584,7 +549,7 @@ static void opOverrideMapStart(Program* program)
             }
         }
 
-        tileSetCenter(tile, TILE_SET_CENTER_FLAG_0x01);
+        tileSetCenter(tile, TILE_SET_CENTER_REFRESH_WINDOW);
         tileWindowRefresh();
     }
 
@@ -866,7 +831,7 @@ static void opMoveTo(Program* program)
             Rect rect;
             newTile = objectSetLocation(object, tile, elevation, &rect);
             if (newTile != -1) {
-                tileSetCenter(object->tile, TILE_SET_CENTER_FLAG_0x01);
+                tileSetCenter(object->tile, TILE_SET_CENTER_REFRESH_WINDOW);
             }
 
             if (tileLimitingEnabled) {
@@ -1029,7 +994,7 @@ static void opDestroyObject(Program* program)
 
         if (isSelf) {
             object->sid = -1;
-            object->flags |= (OBJECT_HIDDEN | OBJECT_TEMPORARY);
+            object->flags |= (OBJECT_HIDDEN | OBJECT_NO_SAVE);
         } else {
             reg_anim_clear(object);
             objectDestroy(object, NULL);
@@ -1219,16 +1184,20 @@ static void opGetMapVar(Program* program)
 {
     int data = programStackPopInteger(program);
 
-    int value = mapGetGlobalVar(data);
+    ProgramValue value;
+    if (mapGetGlobalVar(data, value) == -1) {
+        value.opcode = VALUE_TYPE_INT;
+        value.integerValue = -1;
+    }
 
-    programStackPushInteger(program, value);
+    programStackPushValue(program, value);
 }
 
 // set_map_var
 // 0x4558C8
 static void opSetMapVar(Program* program)
 {
-    int value = programStackPopInteger(program);
+    ProgramValue value = programStackPopValue(program);
     int variable = programStackPopInteger(program);
 
     mapSetGlobalVar(variable, value);
@@ -1238,16 +1207,19 @@ static void opSetMapVar(Program* program)
 // 0x455950
 static void opGetGlobalVar(Program* program)
 {
-    int data = programStackPopInteger(program);
+    int variable = programStackPopInteger(program);
 
-    int value = -1;
     if (gGameGlobalVarsLength != 0) {
-        value = gameGetGlobalVar(data);
+        void* ptr = gameGetGlobalPointer(variable);
+        if (ptr != nullptr) {
+            programStackPushPointer(program, ptr);
+        } else {
+            programStackPushInteger(program, gameGetGlobalVar(variable));
+        }
     } else {
         scriptError("\nScript Error: %s: op_global_var: no global vars found!", program->name);
+        programStackPushInteger(program, -1);
     }
-
-    programStackPushInteger(program, value);
 }
 
 // set_global_var
@@ -1255,11 +1227,17 @@ static void opGetGlobalVar(Program* program)
 // 0x80C6
 static void opSetGlobalVar(Program* program)
 {
-    int value = programStackPopInteger(program);
+    ProgramValue value = programStackPopValue(program);
     int variable = programStackPopInteger(program);
 
     if (gGameGlobalVarsLength != 0) {
-        gameSetGlobalVar(variable, value);
+        if (value.opcode == VALUE_TYPE_PTR) {
+            gameSetGlobalPointer(variable, value.pointerValue);
+            gameSetGlobalVar(variable, 0);
+        } else {
+            gameSetGlobalPointer(variable, nullptr);
+            gameSetGlobalVar(variable, value.integerValue);
+        }
     } else {
         scriptError("\nScript Error: %s: op_set_global_var: no global vars found!", program->name);
     }
@@ -1875,8 +1853,8 @@ static void opAttackComplex(Program* program)
 
     if (isInCombat()) {
         CritterCombatData* combatData = &(self->data.critter.combat);
-        if ((combatData->maneuver & CRITTER_MANEUVER_0x01) == 0) {
-            combatData->maneuver |= CRITTER_MANEUVER_0x01;
+        if ((combatData->maneuver & CRITTER_MANEUVER_ENGAGING) == 0) {
+            combatData->maneuver |= CRITTER_MANEUVER_ENGAGING;
             combatData->whoHitMe = target;
         }
     } else {
@@ -2061,7 +2039,7 @@ static void opMetarule3(Program* program)
         }
         break;
     case METARULE3_TILE_SET_CENTER:
-        result.integerValue = tileSetCenter(param1.integerValue, TILE_SET_CENTER_FLAG_0x01);
+        result.integerValue = tileSetCenter(param1.integerValue, TILE_SET_CENTER_REFRESH_WINDOW);
         break;
     case METARULE3_109:
         result.integerValue = aiGetChemUse(static_cast<Object*>(param1.pointerValue));
@@ -2205,7 +2183,7 @@ static void opSetExitGrids(Program* program)
 
     Object* object = objectFindFirstAtElevation(elevation);
     while (object != NULL) {
-        if (object->pid >= PROTO_ID_0x5000010 && object->pid <= PROTO_ID_0x5000017) {
+        if (object->pid >= FIRST_EXIT_GRID_PID && object->pid <= LAST_EXIT_GRID_PID) {
             object->data.misc.map = destinationMap;
             object->data.misc.tile = destinationTile;
             object->data.misc.elevation = destinationElevation;
@@ -2250,23 +2228,36 @@ static void opCritterHeal(Program* program)
 // 0x457934
 static void opSetLightLevel(Program* program)
 {
+    // Maps light level to light intensity.
+    //
+    // Middle value is mapped one-to-one which corresponds to 50% light level
+    // (cavern lighting). Light levels above (51-100%) and below (0-49%) is
+    // calculated as percentage from two adjacent light values.
+    //
+    // 0x453F90
+    static const int intensities[3] = {
+        LIGHT_INTENSITY_MIN,
+        (LIGHT_INTENSITY_MIN + LIGHT_INTENSITY_MAX) / 2,
+        LIGHT_INTENSITY_MAX,
+    };
+
     int data = programStackPopInteger(program);
 
     int lightLevel = data;
 
     if (data == 50) {
-        lightSetLightLevel(dword_453F90[1], true);
+        lightSetAmbientIntensity(intensities[1], true);
         return;
     }
 
     int lightIntensity;
     if (data > 50) {
-        lightIntensity = dword_453F90[1] + data * (dword_453F90[2] - dword_453F90[1]) / 100;
+        lightIntensity = intensities[1] + data * (intensities[2] - intensities[1]) / 100;
     } else {
-        lightIntensity = dword_453F90[0] + data * (dword_453F90[1] - dword_453F90[0]) / 100;
+        lightIntensity = intensities[0] + data * (intensities[1] - intensities[0]) / 100;
     }
 
-    lightSetLightLevel(lightIntensity, true);
+    lightSetAmbientIntensity(lightIntensity, true);
 }
 
 // game_time
@@ -2996,7 +2987,7 @@ static void opGetMessageString(Program* program)
     int messageListIndex = programStackPopInteger(program);
 
     char* string;
-    if (messageIndex >= 1) {
+    if (messageIndex >= 0) {
         string = _scr_get_msg_str_speech(messageListIndex, messageIndex, 1);
         if (string == NULL) {
             debugPrint("\nError: No message file EXISTS!: index %d, line %d", messageListIndex, messageIndex);
@@ -3158,7 +3149,7 @@ static void opFloatMessage(Program* program)
         color = _colorTable[31744];
         a5 = _colorTable[0];
         font = 103;
-        tileSetCenter(gDude->tile, TILE_SET_CENTER_FLAG_0x01);
+        tileSetCenter(gDude->tile, TILE_SET_CENTER_REFRESH_WINDOW);
         break;
     case FLOATING_MESSAGE_TYPE_NORMAL:
     case FLOATING_MESSAGE_TYPE_YELLOW:
@@ -3586,20 +3577,47 @@ static void opRegAnimObjectRunToTile(Program* program)
 // 0x45A14C
 static void opPlayGameMovie(Program* program)
 {
-    unsigned short flags[MOVIE_COUNT];
-    memcpy(flags, word_453F9C, sizeof(word_453F9C));
+    // 0x453F9C
+    static const unsigned short flags[MOVIE_COUNT] = {
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+        GAME_MOVIE_FADE_IN | GAME_MOVIE_FADE_OUT | GAME_MOVIE_PAUSE_MUSIC,
+    };
 
     program->flags |= PROGRAM_FLAG_0x20;
 
-    int data = programStackPopInteger(program);
+    int movie = programStackPopInteger(program);
+
+    // CE: Disable map updates. Needed to stop animation of objects (dude in
+    // particular) when playing movies (the problem can be seen as visual
+    // artifacts when playing endgame oilrig explosion).
+    bool isoWasDisabled = isoDisable();
 
     gameDialogDisable();
 
-    if (gameMoviePlay(data, word_453F9C[data]) == -1) {
-        debugPrint("\nError playing movie %d!", data);
+    if (gameMoviePlay(movie, flags[movie]) == -1) {
+        debugPrint("\nError playing movie %d!", movie);
     }
 
     gameDialogEnable();
+
+    if (isoWasDisabled) {
+        isoEnable();
+    }
 
     program->flags &= ~PROGRAM_FLAG_0x20;
 }
@@ -4422,8 +4440,8 @@ static void opAttackSetup(Program* program)
         }
 
         if (isInCombat()) {
-            if ((attacker->data.critter.combat.maneuver & CRITTER_MANEUVER_0x01) == 0) {
-                attacker->data.critter.combat.maneuver |= CRITTER_MANEUVER_0x01;
+            if ((attacker->data.critter.combat.maneuver & CRITTER_MANEUVER_ENGAGING) == 0) {
+                attacker->data.critter.combat.maneuver |= CRITTER_MANEUVER_ENGAGING;
                 attacker->data.critter.combat.whoHitMe = defender;
             }
         } else {
@@ -4480,7 +4498,7 @@ static void opDestroyMultipleObjects(Program* program)
 
         if (isSelf) {
             object->sid = -1;
-            object->flags |= (OBJECT_HIDDEN | OBJECT_TEMPORARY);
+            object->flags |= (OBJECT_HIDDEN | OBJECT_NO_SAVE);
         } else {
             reg_anim_clear(object);
             objectDestroy(object, NULL);
@@ -4747,7 +4765,7 @@ static void opTerminateCombat(Program* program)
         Object* self = scriptGetSelf(program);
         if (self != NULL) {
             if (PID_TYPE(self->pid) == OBJ_TYPE_CRITTER) {
-                self->data.critter.combat.maneuver |= CRITTER_MANEUVER_STOP_ATTACKING;
+                self->data.critter.combat.maneuver |= CRITTER_MANEUVER_DISENGAGING;
                 self->data.critter.combat.whoHitMe = NULL;
                 aiInfoSetLastTarget(self, NULL);
             }
@@ -4776,7 +4794,7 @@ static void opCritterStopAttacking(Program* program)
     Object* obj = static_cast<Object*>(programStackPopPointer(program));
 
     if (obj != NULL) {
-        obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_STOP_ATTACKING;
+        obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_DISENGAGING;
         obj->data.critter.combat.whoHitMe = NULL;
         aiInfoSetLastTarget(obj, NULL);
     } else {
@@ -4834,6 +4852,7 @@ static void opGetPcStat(Program* program)
 // 0x45CDD4
 void _intExtraClose_()
 {
+    sfallOpcodesExit();
 }
 
 // 0x45CDD8
@@ -5020,6 +5039,8 @@ void _initIntExtra()
     interpreterRegisterOpcode(0x8153, opTerminateCombat); // op_terminate_combat
     interpreterRegisterOpcode(0x8154, opDebugMessage); // op_debug_msg
     interpreterRegisterOpcode(0x8155, opCritterStopAttacking); // op_critter_stop_attacking
+
+    sfallOpcodesInit();
 }
 
 // NOTE: Uncollapsed 0x45D878.

@@ -272,7 +272,7 @@ int automapReset()
 void automapExit()
 {
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_DB);
+    snprintf(path, sizeof(path), "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_DB);
     compat_remove(path);
 }
 
@@ -297,6 +297,8 @@ int _automapDisplayMap(int map)
 // 0x41B8BC
 void automapShow(bool isInGame, bool isUsingScanner)
 {
+    ScopedGameMode gm(GameMode::kAutomap);
+
     int frmIds[AUTOMAP_FRM_COUNT];
     memcpy(frmIds, gAutomapFrmIds, sizeof(gAutomapFrmIds));
 
@@ -321,7 +323,7 @@ void automapShow(bool isInGame, bool isUsingScanner)
 
     int automapWindowX = (screenGetWidth() - AUTOMAP_WINDOW_WIDTH) / 2;
     int automapWindowY = (screenGetHeight() - AUTOMAP_WINDOW_HEIGHT) / 2;
-    int window = windowCreate(automapWindowX, automapWindowY, AUTOMAP_WINDOW_WIDTH, AUTOMAP_WINDOW_HEIGHT, color, WINDOW_FLAG_0x10 | WINDOW_FLAG_0x04);
+    int window = windowCreate(automapWindowX, automapWindowY, AUTOMAP_WINDOW_WIDTH, AUTOMAP_WINDOW_HEIGHT, color, WINDOW_MODAL | WINDOW_MOVE_ON_TOP);
 
     int scannerBtn = buttonCreate(window,
         111,
@@ -707,7 +709,7 @@ int automapSaveCurrent()
 
     // NOTE: Not sure about the size.
     char path[256];
-    sprintf(path, "%s\\%s", "MAPS", AUTOMAP_DB);
+    snprintf(path, sizeof(path), "%s\\%s", "MAPS", AUTOMAP_DB);
 
     File* stream1 = fileOpen(path, "r+b");
     if (stream1 == NULL) {
@@ -738,7 +740,7 @@ int automapSaveCurrent()
     }
 
     if (entryOffset != 0) {
-        sprintf(path, "%s\\%s", "MAPS", AUTOMAP_TMP);
+        snprintf(path, sizeof(path), "%s\\%s", "MAPS", AUTOMAP_TMP);
 
         File* stream2 = fileOpen(path, "wb");
         if (stream2 == NULL) {
@@ -834,7 +836,7 @@ int automapSaveCurrent()
 
         // NOTE: Not sure about the size.
         char automapDbPath[512];
-        sprintf(automapDbPath, "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_DB);
+        snprintf(automapDbPath, sizeof(automapDbPath), "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_DB);
         if (compat_remove(automapDbPath) != 0) {
             debugPrint("\nAUTOMAP: Error removing database!\n");
             return -1;
@@ -842,7 +844,7 @@ int automapSaveCurrent()
 
         // NOTE: Not sure about the size.
         char automapTmpPath[512];
-        sprintf(automapTmpPath, "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_TMP);
+        snprintf(automapTmpPath, sizeof(automapTmpPath), "%s\\%s\\%s", settings.system.master_patches_path.c_str(), "MAPS", AUTOMAP_TMP);
         if (compat_rename(automapTmpPath, automapDbPath) != 0) {
             debugPrint("\nAUTOMAP: Error renaming database!\n");
             return -1;
@@ -929,7 +931,7 @@ static int automapLoadEntry(int map, int elevation)
     gAutomapEntry.compressedData = NULL;
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s\\%s", "MAPS", AUTOMAP_DB);
+    snprintf(path, sizeof(path), "%s\\%s", "MAPS", AUTOMAP_DB);
 
     bool success = true;
 
@@ -1104,7 +1106,7 @@ static int automapCreate()
     memcpy(gAutomapHeader.offsets, _defam, sizeof(_defam));
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s\\%s", "MAPS", AUTOMAP_DB);
+    snprintf(path, sizeof(path), "%s\\%s", "MAPS", AUTOMAP_DB);
 
     File* stream = fileOpen(path, "wb");
     if (stream == NULL) {
@@ -1159,7 +1161,7 @@ static int _copy_file_data(File* stream1, File* stream2, int length)
 int automapGetHeader(AutomapHeader** automapHeaderPtr)
 {
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s\\%s", "MAPS", AUTOMAP_DB);
+    snprintf(path, sizeof(path), "%s\\%s", "MAPS", AUTOMAP_DB);
 
     File* stream = fileOpen(path, "rb");
     if (stream == NULL) {

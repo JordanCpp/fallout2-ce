@@ -396,7 +396,7 @@ static int pauseHandlerDefaultImpl()
         windowWidth,
         windowHeight,
         256,
-        WINDOW_FLAG_0x10 | WINDOW_FLAG_0x04);
+        WINDOW_MODAL | WINDOW_MOVE_ON_TOP);
     if (win == -1) {
         return -1;
     }
@@ -484,7 +484,7 @@ int screenshotHandlerDefaultImpl(int width, int height, unsigned char* data, uns
     unsigned short shortValue;
 
     for (index = 0; index < 100000; index++) {
-        sprintf(fileName, "scr%.5d.bmp", index);
+        snprintf(fileName, sizeof(fileName), "scr%.5d.bmp", index);
 
         stream = compat_fopen(fileName, "rb");
         if (stream == NULL) {
@@ -1026,24 +1026,24 @@ static void buildNormalizedQwertyKeys()
     keys[SDL_SCANCODE_F13] = -1;
     keys[SDL_SCANCODE_F14] = -1;
     keys[SDL_SCANCODE_F15] = -1;
-    //keys[DIK_KANA] = -1;
-    //keys[DIK_CONVERT] = -1;
-    //keys[DIK_NOCONVERT] = -1;
-    //keys[DIK_YEN] = -1;
+    // keys[DIK_KANA] = -1;
+    // keys[DIK_CONVERT] = -1;
+    // keys[DIK_NOCONVERT] = -1;
+    // keys[DIK_YEN] = -1;
     keys[SDL_SCANCODE_KP_EQUALS] = -1;
-    //keys[DIK_PREVTRACK] = -1;
-    //keys[DIK_AT] = -1;
-    //keys[DIK_COLON] = -1;
-    //keys[DIK_UNDERLINE] = -1;
-    //keys[DIK_KANJI] = -1;
+    // keys[DIK_PREVTRACK] = -1;
+    // keys[DIK_AT] = -1;
+    // keys[DIK_COLON] = -1;
+    // keys[DIK_UNDERLINE] = -1;
+    // keys[DIK_KANJI] = -1;
     keys[SDL_SCANCODE_STOP] = -1;
-    //keys[DIK_AX] = -1;
-    //keys[DIK_UNLABELED] = -1;
+    // keys[DIK_AX] = -1;
+    // keys[DIK_UNLABELED] = -1;
     keys[SDL_SCANCODE_KP_ENTER] = SDL_SCANCODE_KP_ENTER;
     keys[SDL_SCANCODE_RCTRL] = SDL_SCANCODE_RCTRL;
     keys[SDL_SCANCODE_KP_COMMA] = -1;
     keys[SDL_SCANCODE_KP_DIVIDE] = SDL_SCANCODE_KP_DIVIDE;
-    //keys[DIK_SYSRQ] = 84;
+    // keys[DIK_SYSRQ] = 84;
     keys[SDL_SCANCODE_RALT] = SDL_SCANCODE_RALT;
     keys[SDL_SCANCODE_HOME] = SDL_SCANCODE_HOME;
     keys[SDL_SCANCODE_UP] = SDL_SCANCODE_UP;
@@ -1207,6 +1207,16 @@ void _GNW95_lost_focus()
 static void idleImpl()
 {
     SDL_Delay(125);
+}
+
+void beginTextInput()
+{
+    SDL_StartTextInput();
+}
+
+void endTextInput()
+{
+    SDL_StopTextInput();
 }
 
 } // namespace fallout

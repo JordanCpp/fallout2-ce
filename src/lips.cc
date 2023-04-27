@@ -406,14 +406,14 @@ static int _lips_make_speech()
 
     char path[COMPAT_MAX_PATH];
     char* v1 = _lips_fix_string(gLipsData.field_50, sizeof(gLipsData.field_50));
-    sprintf(path, "%s%s\\%s.%s", "SOUND\\SPEECH\\", _lips_subdir_name, v1, "ACM");
+    snprintf(path, sizeof(path), "%s%s\\%s.%s", "SOUND\\SPEECH\\", _lips_subdir_name, v1, "ACM");
 
     if (gLipsData.sound != NULL) {
         soundDelete(gLipsData.sound);
         gLipsData.sound = NULL;
     }
 
-    gLipsData.sound = soundAllocate(1, 8);
+    gLipsData.sound = soundAllocate(SOUND_TYPE_MEMORY, SOUND_16BIT);
     if (gLipsData.sound == NULL) {
         debugPrint("\nsoundAllocate falied in lips_make_speech!");
         return -1;

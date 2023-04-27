@@ -9,7 +9,6 @@
 #include "debug.h"
 #include "memory.h"
 #include "platform_compat.h"
-#include "pointer_registry.h"
 #include "sound_decoder.h"
 
 namespace fallout {
@@ -28,7 +27,7 @@ static int soundEffectsListCopyFileNames(char** fileNameList);
 static int soundEffectsListPopulateFileSizes();
 static int soundEffectsListSort();
 static int soundEffectsListCompareByName(const void* a1, const void* a2);
-static int _sfxl_ad_reader(int fileHandle, void* buf, unsigned int size);
+static int soundEffectsListSoundDecoderReadHandler(void* data, void* buf, unsigned int size);
 
 // 0x51C8F8
 static bool gSoundEffectsListInitialized = false;
@@ -86,9 +85,9 @@ int soundEffectsListInit(const char* soundEffectsPath, int a2, int debugLevel)
     gSoundEffectsListPathLength = strlen(gSoundEffectsListPath);
 
     if (gSoundEffectsListPathLength == 0 || soundEffectsPath[gSoundEffectsListPathLength - 1] == '\\') {
-        sprintf(path, "%sSNDLIST.LST", soundEffectsPath);
+        snprintf(path, sizeof(path), "%sSNDLIST.LST", soundEffectsPath);
     } else {
-        sprintf(path, "%s\\SNDLIST.LST", soundEffectsPath);
+        snprintf(path, sizeof(path), "%s\\SNDLIST.LST", soundEffectsPath);
     }
 
     File* stream = fileOpen(path, "rt");
@@ -424,16 +423,13 @@ static int soundEffectsListPopulateFileSizes()
                     return 1;
                 }
 
-                int fileHandle = ptrToInt((void*)stream);
-
-                int v1;
-                int v2;
-                int v3;
-                SoundDecoder* soundDecoder = soundDecoderInit(_sfxl_ad_reader, fileHandle, &v1, &v2, &v3);
-                entry->dataSize = 2 * v3;
+                int channels;
+                int sampleRate;
+                int sampleCount;
+                SoundDecoder* soundDecoder = soundDecoderInit(soundEffectsListSoundDecoderReadHandler, stream, &channels, &sampleRate, &sampleCount);
+                entry->dataSize = 2 * sampleCount;
                 soundDecoderFree(soundDecoder);
                 fileClose(stream);
-                intToPtr(fileHandle, true);
             }
             break;
         default:
@@ -468,9 +464,9 @@ static int soundEffectsListCompareByName(const void* a1, const void* a2)
 }
 
 // read via xfile
-static int _sfxl_ad_reader(int fileHandle, void* buf, unsigned int size)
+static int soundEffectsListSoundDecoderReadHandler(void* data, void* buf, unsigned int size)
 {
-    return fileRead(buf, 1, size, (File*)intToPtr(fileHandle));
+    return fileRead(buf, 1, size, reinterpret_cast<File*>(data));
 }
 
 } // namespace fallout

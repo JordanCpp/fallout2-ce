@@ -83,6 +83,7 @@ static void _endgame_movie_bk_process();
 static int endgameEndingInit();
 static void endgameEndingFree();
 static int endgameDeathEndingValidate(int* percentage);
+static void endgameEndingUpdateOverlay();
 
 // The number of lines in current subtitles file.
 //
@@ -204,6 +205,8 @@ static unsigned char* gEndgameEndingSlideshowWindowBuffer;
 // 0x570BF4
 static int gEndgameEndingSlideshowWindow;
 
+static int gEndgameEndingOverlay;
+
 // 0x43F788
 void endgamePlaySlideshow()
 {
@@ -320,6 +323,9 @@ static void endgameEndingRenderPanningScene(int direction, const char* narratorF
         unsigned char* backgroundData = artGetFrameData(background, 0, 0);
         bufferFill(gEndgameEndingSlideshowWindowBuffer, ENDGAME_ENDING_WINDOW_WIDTH, ENDGAME_ENDING_WINDOW_HEIGHT, ENDGAME_ENDING_WINDOW_WIDTH, _colorTable[0]);
         endgameEndingLoadPalette(6, 327);
+
+        // CE: Update overlay.
+        endgameEndingUpdateOverlay();
 
         unsigned char palette[768];
         memcpy(palette, _cmap, 768);
@@ -454,6 +460,9 @@ static void endgameEndingRenderStaticScene(int fid, const char* narratorFileName
 
         endgameEndingLoadPalette(FID_TYPE(fid), fid & 0xFFF);
 
+        // CE: Update overlay.
+        endgameEndingUpdateOverlay();
+
         endgameEndingVoiceOverInit(narratorFileName);
 
         unsigned int delay;
@@ -555,6 +564,13 @@ static int endgameEndingSlideshowWindowInit()
 
     paletteFadeTo(gPaletteBlack);
 
+    // CE: Every slide has a separate color palette which is incompatible with
+    // main color palette. Setup overlay to hide everything.
+    gEndgameEndingOverlay = windowCreate(0, 0, screenGetWidth(), screenGetHeight(), _colorTable[0], WINDOW_MOVE_ON_TOP);
+    if (gEndgameEndingOverlay == -1) {
+        return -1;
+    }
+
     int windowEndgameEndingX = (screenGetWidth() - ENDGAME_ENDING_WINDOW_WIDTH) / 2;
     int windowEndgameEndingY = (screenGetHeight() - ENDGAME_ENDING_WINDOW_HEIGHT) / 2;
     gEndgameEndingSlideshowWindow = windowCreate(windowEndgameEndingX,
@@ -562,7 +578,7 @@ static int endgameEndingSlideshowWindowInit()
         ENDGAME_ENDING_WINDOW_WIDTH,
         ENDGAME_ENDING_WINDOW_HEIGHT,
         _colorTable[0],
-        WINDOW_FLAG_0x04);
+        WINDOW_MOVE_ON_TOP);
     if (gEndgameEndingSlideshowWindow == -1) {
         return -1;
     }
@@ -581,7 +597,7 @@ static int endgameEndingSlideshowWindowInit()
         return 0;
     }
 
-    sprintf(gEndgameEndingSubtitlesLocalizedPath, "text\\%s\\cuts\\", settings.system.language.c_str());
+    snprintf(gEndgameEndingSubtitlesLocalizedPath, sizeof(gEndgameEndingSubtitlesLocalizedPath), "text\\%s\\cuts\\", settings.system.language.c_str());
 
     gEndgameEndingSubtitles = (char**)internal_malloc(sizeof(*gEndgameEndingSubtitles) * ENDGAME_ENDING_MAX_SUBTITLES);
     if (gEndgameEndingSubtitles == NULL) {
@@ -623,6 +639,7 @@ static void endgameEndingSlideshowWindowFree()
 
     speechSetEndCallback(NULL);
     windowDestroy(gEndgameEndingSlideshowWindow);
+    windowDestroy(gEndgameEndingOverlay);
 
     if (!_endgame_mouse_state) {
         mouseHideCursor();
@@ -652,7 +669,7 @@ static void endgameEndingVoiceOverInit(const char* fileBaseName)
     gEndgameEndingVoiceOverSubtitlesLoaded = false;
 
     // Build speech file path.
-    sprintf(path, "%s%s", "narrator\\", fileBaseName);
+    snprintf(path, sizeof(path), "%s%s", "narrator\\", fileBaseName);
 
     if (speechLoad(path, 10, 14, 15) != -1) {
         gEndgameEndingVoiceOverSpeechLoaded = true;
@@ -660,7 +677,7 @@ static void endgameEndingVoiceOverInit(const char* fileBaseName)
 
     if (gEndgameEndingSubtitlesEnabled) {
         // Build subtitles file path.
-        sprintf(path, "%s%s.txt", gEndgameEndingSubtitlesLocalizedPath, fileBaseName);
+        snprintf(path, sizeof(path), "%s%s.txt", gEndgameEndingSubtitlesLocalizedPath, fileBaseName);
 
         if (endgameEndingSubtitlesLoad(path) != 0) {
             return;
@@ -730,7 +747,7 @@ static void endgameEndingLoadPalette(int type, int id)
 
     if (strlen(fileName) <= 8) {
         char path[COMPAT_MAX_PATH];
-        sprintf(path, "%s\\%s.pal", "art\\intrface", fileName);
+        snprintf(path, sizeof(path), "%s\\%s.pal", "art\\intrface", fileName);
         colorPaletteLoad(path);
     }
 }
@@ -1210,6 +1227,16 @@ char* endgameDeathEndingGetFileName()
     debugPrint("\nendgameSetupDeathEnding: Death Filename: %s", gEndgameDeathEndingFileName);
 
     return gEndgameDeathEndingFileName;
+}
+
+void endgameEndingUpdateOverlay()
+{
+    bufferFill(windowGetBuffer(gEndgameEndingOverlay),
+        windowGetWidth(gEndgameEndingOverlay),
+        windowGetHeight(gEndgameEndingOverlay),
+        windowGetWidth(gEndgameEndingOverlay),
+        intensityColorTable[_colorTable[0]][0]);
+    windowRefresh(gEndgameEndingOverlay);
 }
 
 } // namespace fallout

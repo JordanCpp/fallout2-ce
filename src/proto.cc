@@ -239,7 +239,7 @@ int _proto_list_str(int pid, char* proto_path)
         *pch = '\0';
     }
 
-    pch = strchr(string, '\n');
+    pch = strpbrk(string, "\r\n");
     if (pch != NULL) {
         *pch = '\0';
     }
@@ -247,6 +247,12 @@ int _proto_list_str(int pid, char* proto_path)
     strcpy(proto_path, string);
 
     return 0;
+}
+
+// 0x49E984
+size_t proto_size(int type)
+{
+    return type >= 0 && type < OBJ_TYPE_COUNT ? _proto_sizes[type] : 0;
 }
 
 // 0x49E99C
@@ -519,7 +525,7 @@ int objectDataRead(Object* obj, File* stream)
 
             break;
         case OBJ_TYPE_MISC:
-            if (obj->pid >= 0x5000010 && obj->pid <= 0x5000017) {
+            if (isExitGridPid(obj->pid)) {
                 if (fileReadInt32(stream, &(obj->data.misc.map)) == -1) return -1;
                 if (fileReadInt32(stream, &(obj->data.misc.tile)) == -1) return -1;
                 if (fileReadInt32(stream, &(obj->data.misc.elevation)) == -1) return -1;
@@ -600,7 +606,7 @@ int objectDataWrite(Object* obj, File* stream)
             }
             break;
         case OBJ_TYPE_MISC:
-            if (obj->pid >= 0x5000010 && obj->pid <= 0x5000017) {
+            if (isExitGridPid(obj->pid)) {
                 if (fileWriteInt32(stream, data->misc.map) == -1) return -1;
                 if (fileWriteInt32(stream, data->misc.tile) == -1) return -1;
                 if (fileWriteInt32(stream, data->misc.elevation) == -1) return -1;
@@ -674,7 +680,7 @@ static int _proto_update_gen(Object* obj)
         }
         break;
     case OBJ_TYPE_MISC:
-        if (obj->pid >= 0x5000010 && obj->pid <= 0x5000017) {
+        if (isExitGridPid(obj->pid)) {
             data->misc.tile = -1;
             data->misc.elevation = 0;
             data->misc.rotation = 0;
@@ -1065,7 +1071,7 @@ int protoInit()
     char path[COMPAT_MAX_PATH];
     int i;
 
-    sprintf(path, "%s\\proto", settings.system.master_patches_path.c_str());
+    snprintf(path, sizeof(path), "%s\\proto", settings.system.master_patches_path.c_str());
     len = strlen(path);
 
     compat_mkdir(path);
@@ -1103,12 +1109,16 @@ int protoInit()
     }
 
     for (i = 0; i < 6; i++) {
-        sprintf(path, "%spro_%.4s%s", asc_5186C8, artGetObjectTypeName(i), ".msg");
+        snprintf(path, sizeof(path), "%spro_%.4s%s", asc_5186C8, artGetObjectTypeName(i), ".msg");
 
         if (!messageListLoad(&(_proto_msg_files[i]), path)) {
             debugPrint("\nError: Loading proto message files!");
             return -1;
         }
+    }
+
+    for (i = 0; i < 6; i++) {
+        messageListRepositorySetProtoMessageList(i, &(_proto_msg_files[i]));
     }
 
     _mp_critter_stats_list = _aDrugStatSpecia;
@@ -1137,7 +1147,7 @@ int protoInit()
         return -1;
     }
 
-    sprintf(path, "%sproto.msg", asc_5186C8);
+    snprintf(path, sizeof(path), "%sproto.msg", asc_5186C8);
 
     if (!messageListLoad(&gProtoMessageList, path)) {
         debugPrint("\nError: Loading main proto message file!");
@@ -1181,6 +1191,8 @@ int protoInit()
         gBodyTypeNames[i] = getmsg(&gProtoMessageList, &messageListItem, 400 + i);
     }
 
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_PROTO, &gProtoMessageList);
+
     return 0;
 }
 
@@ -1218,9 +1230,11 @@ void protoExit()
     }
 
     for (i = 0; i < 6; i++) {
+        messageListRepositorySetProtoMessageList(i, nullptr);
         messageListFree(&(_proto_msg_files[i]));
     }
 
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_PROTO, nullptr);
     messageListFree(&gProtoMessageList);
 }
 
@@ -1696,12 +1710,10 @@ static int _proto_load_pid(int pid, Proto** protoPtr)
     return 0;
 }
 
-// allocate memory for proto of given type and adds it to proto cache
+// 0x4A1D98
 static int _proto_find_free_subnode(int type, Proto** protoPtr)
 {
-    size_t size = (type >= 0 && type < 11) ? _proto_sizes[type] : 0;
-
-    Proto* proto = (Proto*)internal_malloc(size);
+    Proto* proto = (Proto*)internal_malloc(proto_size(type));
     *protoPtr = proto;
     if (proto == NULL) {
         return -1;

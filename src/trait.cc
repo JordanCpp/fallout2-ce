@@ -62,7 +62,7 @@ int traitsInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s%s", asc_5186C8, "trait.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "trait.msg");
 
     if (!messageListLoad(&gTraitsMessageList, path)) {
         return -1;
@@ -85,6 +85,8 @@ int traitsInit()
     // NOTE: Uninline.
     traitsReset();
 
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_TRAIT, &gTraitsMessageList);
+
     return true;
 }
 
@@ -99,6 +101,7 @@ void traitsReset()
 // 0x4B3AF8
 void traitsExit()
 {
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_TRAIT, nullptr);
     messageListFree(&gTraitsMessageList);
 }
 
@@ -262,12 +265,12 @@ int traitGetStatModifier(int stat)
         break;
     case STAT_RADIATION_RESISTANCE:
         if (traitIsSelected(TRAIT_FAST_METABOLISM)) {
-            modifier -= -critterGetBaseStat(gDude, STAT_RADIATION_RESISTANCE);
+            modifier -= critterGetBaseStat(gDude, STAT_RADIATION_RESISTANCE);
         }
         break;
     case STAT_POISON_RESISTANCE:
         if (traitIsSelected(TRAIT_FAST_METABOLISM)) {
-            modifier -= -critterGetBaseStat(gDude, STAT_POISON_RESISTANCE);
+            modifier -= critterGetBaseStat(gDude, STAT_POISON_RESISTANCE);
         }
         break;
     }

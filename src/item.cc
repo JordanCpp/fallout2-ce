@@ -195,11 +195,13 @@ int itemsInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s%s", asc_5186C8, "item.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "item.msg");
 
     if (!messageListLoad(&gItemsMessageList, path)) {
         return -1;
     }
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_ITEM, &gItemsMessageList);
 
     // SFALL
     booksInit();
@@ -219,6 +221,7 @@ void itemsReset()
 // 0x477148
 void itemsExit()
 {
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_ITEM, nullptr);
     messageListFree(&gItemsMessageList);
 
     // SFALL
@@ -571,8 +574,8 @@ int itemDropAll(Object* critter, int tile)
     int frmId = critter->fid & 0xFFF;
 
     Inventory* inventory = &(critter->data.inventory);
-    for (int index = 0; index < inventory->length; index++) {
-        InventoryItem* inventoryItem = &(inventory->items[index]);
+    while (inventory->length > 0) {
+        InventoryItem* inventoryItem = &(inventory->items[0]);
         Object* item = inventoryItem->item;
         if (item->pid == PROTO_ID_MONEY) {
             if (itemRemove(critter, item, inventoryItem->quantity) != 0) {
@@ -602,7 +605,19 @@ int itemDropAll(Object* critter, int tile)
                 }
             }
 
-            for (int index = 0; index < inventoryItem->quantity; index++) {
+            // This loop is a little bit tricky. `inventoryItem` is a pointer
+            // to the first entry in inventory. It's `quantity` is dynamically
+            // decremented during `itemRemove`. It's `item` is also updated with
+            // a replacement (`itemRemove` creates new Object instance in
+            // inventory).
+            //
+            // Once entire item stack is dropped, the content pointed to by
+            // `inventoryItem` is also updated (see `item_compact`), it points
+            // to the next inventory item. It can also become dangling pointer
+            // (when `inventoryItem` entry is the last in inventory).
+            int quantity = inventoryItem->quantity;
+            for (int it = 0; it < quantity; it++) {
+                item = inventoryItem->item;
                 if (itemRemove(critter, item, 1) != 0) {
                     return -1;
                 }
@@ -626,7 +641,7 @@ int itemDropAll(Object* critter, int tile)
         }
     }
 
-    return -1;
+    return 0;
 }
 
 // 0x4779F0
@@ -1491,7 +1506,7 @@ bool weaponCanBeReloadedWith(Object* weapon, Object* ammo)
 {
     if (weapon->pid == PROTO_ID_SOLAR_SCORCHER) {
         // Check light level to recharge solar scorcher.
-        if (lightGetLightLevel() > 62259) {
+        if (lightGetAmbientIntensity() > LIGHT_INTENSITY_MAX * 0.95) {
             return true;
         }
 
@@ -1581,7 +1596,7 @@ int weaponReload(Object* weapon, Object* ammo)
 int weaponGetRange(Object* critter, int hitMode)
 {
     int range;
-    int v12;
+    int effectiveStrength;
 
     // NOTE: Uninline.
     Object* weapon = critterGetWeaponForHitMode(critter, hitMode);
@@ -1597,12 +1612,18 @@ int weaponGetRange(Object* critter, int hitMode)
 
         if (weaponGetAttackTypeForHitMode(weapon, hitMode) == ATTACK_TYPE_THROW) {
             if (critter == gDude) {
-                v12 = critterGetStat(critter, STAT_STRENGTH) + 2 * perkGetRank(critter, PERK_HEAVE_HO);
+                effectiveStrength = critterGetStat(critter, STAT_STRENGTH) + 2 * perkGetRank(critter, PERK_HEAVE_HO);
+
+                // SFALL: Fix for Heave Ho! increasing effective strength above
+                // 10.
+                if (effectiveStrength > PRIMARY_STAT_MAX) {
+                    effectiveStrength = PRIMARY_STAT_MAX;
+                }
             } else {
-                v12 = critterGetStat(critter, STAT_STRENGTH);
+                effectiveStrength = critterGetStat(critter, STAT_STRENGTH);
             }
 
-            int maxRange = 3 * v12;
+            int maxRange = 3 * effectiveStrength;
             if (range >= maxRange) {
                 range = maxRange;
             }
@@ -2251,7 +2272,7 @@ int _item_m_use_charged_item(Object* critter, Object* miscItem)
             if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
                 char text[80];
                 const char* itemName = objectGetName(miscItem);
-                sprintf(text, messageListItem.text, itemName);
+                snprintf(text, sizeof(text), messageListItem.text, itemName);
                 displayMonitorAddMessage(text);
             }
         }
@@ -2297,7 +2318,7 @@ int miscItemTrickleEventProcess(Object* item, void* data)
             if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
                 char text[80];
                 const char* itemName = objectGetName(item);
-                sprintf(text, messageListItem.text, itemName);
+                snprintf(text, sizeof(text), messageListItem.text, itemName);
                 displayMonitorAddMessage(text);
             }
         }
@@ -2346,7 +2367,7 @@ int miscItemTurnOn(Object* item)
             messageListItem.num = 5;
             if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
                 char* name = objectGetName(item);
-                sprintf(text, messageListItem.text, name);
+                snprintf(text, sizeof(text), messageListItem.text, name);
                 displayMonitorAddMessage(text);
             }
         }
@@ -2372,7 +2393,7 @@ int miscItemTurnOn(Object* item)
         messageListItem.num = 6;
         if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
             char* name = objectGetName(item);
-            sprintf(text, messageListItem.text, name);
+            snprintf(text, sizeof(text), messageListItem.text, name);
             displayMonitorAddMessage(text);
         }
 
@@ -2381,7 +2402,7 @@ int miscItemTurnOn(Object* item)
             messageListItem.num = 8;
             if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
                 int radiation = critterGetRadiation(critter);
-                sprintf(text, messageListItem.text, radiation);
+                snprintf(text, sizeof(text), messageListItem.text, radiation);
                 displayMonitorAddMessage(text);
             }
         }
@@ -2420,7 +2441,7 @@ int miscItemTurnOff(Object* item)
         if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
             const char* name = objectGetName(item);
             char text[80];
-            sprintf(text, messageListItem.text, name);
+            snprintf(text, sizeof(text), messageListItem.text, name);
             displayMonitorAddMessage(text);
         }
     }
@@ -2664,7 +2685,7 @@ static void _perform_drug_effect(Object* critter, int* stats, int* mods, bool is
                 name = critterGetName(critter);
                 // %s succumbs to the adverse effects of chems.
                 text = getmsg(&gItemsMessageList, &messageListItem, 600);
-                sprintf(v24, text, name);
+                snprintf(v24, sizeof(v24), text, name);
                 _combatKillCritterOutsideCombat(critter, v24);
             }
         }
@@ -2683,7 +2704,7 @@ static void _perform_drug_effect(Object* critter, int* stats, int* mods, bool is
                 messageListItem.num = after < before ? 2 : 1;
                 if (messageListGetItem(&gItemsMessageList, &messageListItem)) {
                     char* statName = statGetName(stat);
-                    sprintf(str, messageListItem.text, after < before ? before - after : after - before, statName);
+                    snprintf(str, sizeof(str), messageListItem.text, after < before ? before - after : after - before, statName);
                     displayMonitorAddMessage(str);
                     statsChanged = true;
                 }
@@ -2711,7 +2732,7 @@ static void _perform_drug_effect(Object* critter, int* stats, int* mods, bool is
             name = critterGetName(critter);
             // %s succumbs to the adverse effects of chems.
             text = getmsg(&gItemsMessageList, &messageListItem, 600);
-            sprintf(v24, text, name);
+            snprintf(v24, sizeof(v24), text, name);
             // TODO: Why message is ignored?
         }
     }
@@ -3303,7 +3324,7 @@ static void booksInitCustom()
                 char sectionKey[4];
                 for (int index = 0; index < bookCount; index++) {
                     // Books numbering starts with 1.
-                    sprintf(sectionKey, "%d", index + 1);
+                    snprintf(sectionKey, sizeof(sectionKey), "%d", index + 1);
 
                     int bookPid;
                     if (!configGetInt(&booksConfig, sectionKey, "PID", &bookPid)) continue;

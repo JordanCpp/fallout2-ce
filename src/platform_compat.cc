@@ -3,8 +3,6 @@
 #include <string.h>
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #endif
 
@@ -14,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #else
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -187,21 +186,6 @@ void compat_makepath(char* path, const char* drive, const char* dir, const char*
 #endif
 }
 
-int compat_read(int fileHandle, void* buf, unsigned int size)
-{
-    return read(fileHandle, buf, size);
-}
-
-int compat_write(int fileHandle, const void* buf, unsigned int size)
-{
-    return write(fileHandle, buf, size);
-}
-
-long compat_lseek(int fileHandle, long offset, int origin)
-{
-    return lseek(fileHandle, offset, origin);
-}
-
 long compat_tell(int fd)
 {
     return lseek(fd, 0, SEEK_CUR);
@@ -221,6 +205,7 @@ int compat_mkdir(const char* path)
     char nativePath[COMPAT_MAX_PATH];
     strcpy(nativePath, path);
     compat_windows_path_to_native(nativePath);
+    compat_resolve_path(nativePath);
 
 #ifdef _WIN32
     return mkdir(nativePath);
@@ -245,6 +230,7 @@ FILE* compat_fopen(const char* path, const char* mode)
     char nativePath[COMPAT_MAX_PATH];
     strcpy(nativePath, path);
     compat_windows_path_to_native(nativePath);
+    compat_resolve_path(nativePath);
     return fopen(nativePath, mode);
 }
 
@@ -253,7 +239,38 @@ gzFile compat_gzopen(const char* path, const char* mode)
     char nativePath[COMPAT_MAX_PATH];
     strcpy(nativePath, path);
     compat_windows_path_to_native(nativePath);
+    compat_resolve_path(nativePath);
     return gzopen(nativePath, mode);
+}
+
+char* compat_fgets(char* buffer, int maxCount, FILE* stream)
+{
+    buffer = fgets(buffer, maxCount, stream);
+
+    if (buffer != NULL) {
+        size_t len = strlen(buffer);
+        if (len >= 2 && buffer[len - 1] == '\n' && buffer[len - 2] == '\r') {
+            buffer[len - 2] = '\n';
+            buffer[len - 1] = '\0';
+        }
+    }
+
+    return buffer;
+}
+
+char* compat_gzgets(gzFile stream, char* buffer, int maxCount)
+{
+    buffer = gzgets(stream, buffer, maxCount);
+
+    if (buffer != NULL) {
+        size_t len = strlen(buffer);
+        if (len >= 2 && buffer[len - 1] == '\n' && buffer[len - 2] == '\r') {
+            buffer[len - 2] = '\n';
+            buffer[len - 1] = '\0';
+        }
+    }
+
+    return buffer;
 }
 
 int compat_remove(const char* path)
@@ -261,6 +278,7 @@ int compat_remove(const char* path)
     char nativePath[COMPAT_MAX_PATH];
     strcpy(nativePath, path);
     compat_windows_path_to_native(nativePath);
+    compat_resolve_path(nativePath);
     return remove(nativePath);
 }
 
@@ -269,10 +287,12 @@ int compat_rename(const char* oldFileName, const char* newFileName)
     char nativeOldFileName[COMPAT_MAX_PATH];
     strcpy(nativeOldFileName, oldFileName);
     compat_windows_path_to_native(nativeOldFileName);
+    compat_resolve_path(nativeOldFileName);
 
     char nativeNewFileName[COMPAT_MAX_PATH];
     strcpy(nativeNewFileName, newFileName);
     compat_windows_path_to_native(nativeNewFileName);
+    compat_resolve_path(nativeNewFileName);
 
     return rename(nativeOldFileName, nativeNewFileName);
 }
@@ -288,6 +308,69 @@ void compat_windows_path_to_native(char* path)
         pch++;
     }
 #endif
+}
+
+void compat_resolve_path(char* path)
+{
+#ifndef _WIN32
+    char* pch = path;
+
+    DIR *dir;
+    if (pch[0] == '/') {
+        dir = opendir("/");
+        pch++;
+    } else {
+        dir = opendir(".");
+    }
+
+    while (dir != NULL) {
+        char* sep = strchr(pch, '/');
+        size_t length;
+        if (sep != NULL) {
+            length = sep - pch;
+        } else {
+            length = strlen(pch);
+        }
+
+        bool found = false;
+
+        struct dirent* entry = readdir(dir);
+        while (entry != NULL) {
+            if (strlen(entry->d_name) == length && compat_strnicmp(pch, entry->d_name, length) == 0) {
+                strncpy(pch, entry->d_name, length);
+                found = true;
+                break;
+            }
+            entry = readdir(dir);
+        }
+
+        closedir(dir);
+        dir = NULL;
+
+        if (!found) {
+            break;
+        }
+
+        if (sep == NULL) {
+            break;
+        }
+
+        *sep = '\0';
+        dir = opendir(path);
+        *sep = '/';
+
+        pch = sep + 1;
+    }
+#endif
+}
+
+int compat_access(const char* path, int mode)
+{
+    char nativePath[COMPAT_MAX_PATH];
+    strcpy(nativePath, path);
+    compat_windows_path_to_native(nativePath);
+    compat_resolve_path(nativePath);
+    return access(nativePath, mode);
 }
 
 char* compat_strdup(const char* string)

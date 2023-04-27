@@ -171,12 +171,14 @@ int critterInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%sscrname.msg", asc_5186C8);
+    snprintf(path, sizeof(path), "%sscrname.msg", asc_5186C8);
 
     if (!messageListLoad(&gCritterMessageList, path)) {
         debugPrint("\nError: Loading critter name message file!");
         return -1;
     }
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_SCRNAME, &gCritterMessageList);
 
     return 0;
 }
@@ -193,6 +195,7 @@ void critterReset()
 // 0x42D004
 void critterExit()
 {
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_SCRNAME, nullptr);
     messageListFree(&gCritterMessageList);
 }
 
@@ -993,8 +996,8 @@ bool _critter_is_prone(Object* critter)
     int anim = FID_ANIM_TYPE(critter->fid);
 
     return (critter->data.critter.combat.results & (DAM_KNOCKED_OUT | DAM_KNOCKED_DOWN)) != 0
-    || (anim >= FIRST_KNOCKDOWN_AND_DEATH_ANIM && anim <= LAST_KNOCKDOWN_AND_DEATH_ANIM)
-    || (anim >= FIRST_SF_DEATH_ANIM && anim <= LAST_SF_DEATH_ANIM);
+        || (anim >= FIRST_KNOCKDOWN_AND_DEATH_ANIM && anim <= LAST_KNOCKDOWN_AND_DEATH_ANIM)
+        || (anim >= FIRST_SF_DEATH_ANIM && anim <= LAST_SF_DEATH_ANIM);
 }
 
 // critter_body_type
@@ -1251,7 +1254,7 @@ int knockoutEventProcess(Object* obj, void* data)
     obj->data.critter.combat.results |= DAM_KNOCKED_DOWN;
 
     if (isInCombat()) {
-        obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_0x01;
+        obj->data.critter.combat.maneuver |= CRITTER_MANEUVER_ENGAGING;
     } else {
         _dude_standup(obj);
     }

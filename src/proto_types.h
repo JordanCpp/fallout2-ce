@@ -198,10 +198,10 @@ enum {
 #define PROTO_ID_0x20001D6 0x20001D6
 #define PROTO_ID_0x20001EB 0x20001EB
 #define FID_0x20001F5 0x20001F5
-// first exit grid
-#define PROTO_ID_0x5000010 0x5000010
-// last exit grid
-#define PROTO_ID_0x5000017 0x5000017
+#define FIRST_EXIT_GRID_PID 0x5000010
+#define LAST_EXIT_GRID_PID 0x5000017
+#define FIRST_RADIOACTIVE_GOO_PID 0x20003D9
+#define LAST_RADIOACTIVE_GOO_PID 0x20003DC
 
 typedef enum ItemProtoFlags {
     ItemProtoFlags_0x08 = 0x08,

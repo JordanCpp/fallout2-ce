@@ -159,10 +159,10 @@ int gIsoWindow;
 // 0x631E50
 static char _scratchStr[40];
 
-// Last map file name.
-//
-// 0x631E78
-static char _map_path[COMPAT_MAX_PATH];
+// CE: Basically the same problem described in |gMapLocalPointers|, but this
+// time Olympus folks use global map variables to store objects (looks like
+// only `self_obj`).
+static std::vector<void*> gMapGlobalPointers;
 
 // CE: There is a bug in the user-space scripting where they want to store
 // pointers to |Object| instances in local vars. This is obviously wrong as it's
@@ -288,7 +288,7 @@ void _map_init()
 
     if (messageListInit(&gMapMessageList)) {
         char path[COMPAT_MAX_PATH];
-        sprintf(path, "%smap.msg", asc_5186C8);
+        snprintf(path, sizeof(path), "%smap.msg", asc_5186C8);
 
         if (!messageListLoad(&gMapMessageList, path)) {
             debugPrint("\nError loading map_msg_file!");
@@ -300,7 +300,9 @@ void _map_init()
     mapNewMap();
     tickersAdd(gameMouseRefresh);
     _gmouse_disable(0);
-    windowUnhide(gIsoWindow);
+    windowShow(gIsoWindow);
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_MAP, &gMapMessageList);
 }
 
 // 0x482084
@@ -309,6 +311,8 @@ void _map_exit()
     windowHide(gIsoWindow);
     gameMouseSetCursor(MOUSE_CURSOR_ARROW);
     tickersRemove(gameMouseRefresh);
+
+    messageListRepositorySetStandardMessageList(STANDARD_MESSAGE_LIST_MAP, nullptr);
     if (!messageListFree(&gMapMessageList)) {
         debugPrint("\nError exiting map_msg_file!");
     }
@@ -390,27 +394,41 @@ int mapSetElevation(int elevation)
 }
 
 // 0x482220
-int mapSetGlobalVar(int var, int value)
+int mapSetGlobalVar(int var, ProgramValue& value)
 {
     if (var < 0 || var >= gMapGlobalVarsLength) {
         debugPrint("ERROR: attempt to reference map var out of range: %d", var);
         return -1;
     }
 
-    gMapGlobalVars[var] = value;
+    if (value.opcode == VALUE_TYPE_PTR) {
+        gMapGlobalVars[var] = 0;
+        gMapGlobalPointers[var] = value.pointerValue;
+    } else {
+        gMapGlobalVars[var] = value.integerValue;
+        gMapGlobalPointers[var] = nullptr;
+    }
 
     return 0;
 }
 
 // 0x482250
-int mapGetGlobalVar(int var)
+int mapGetGlobalVar(int var, ProgramValue& value)
 {
     if (var < 0 || var >= gMapGlobalVarsLength) {
         debugPrint("ERROR: attempt to reference map var out of range: %d", var);
-        return 0;
+        return -1;
     }
 
-    return gMapGlobalVars[var];
+    if (gMapGlobalPointers[var] != nullptr) {
+        value.opcode = VALUE_TYPE_PTR;
+        value.pointerValue = gMapGlobalPointers[var];
+    } else {
+        value.opcode = VALUE_TYPE_INT;
+        value.integerValue = gMapGlobalVars[var];
+    }
+
+    return 0;
 }
 
 // 0x482280
@@ -686,10 +704,13 @@ int mapScroll(int dx, int dy)
 // 0x482900
 static char* mapBuildPath(char* name)
 {
+    // 0x631E78
+    static char map_path[COMPAT_MAX_PATH];
+
     if (*name != '\\') {
         // NOTE: Uppercased from "maps".
-        sprintf(_map_path, "MAPS\\%s", name);
-        return _map_path;
+        snprintf(map_path, sizeof(map_path), "MAPS\\%s", name);
+        return map_path;
     }
     return name;
 }
@@ -707,7 +728,7 @@ int mapSetEnteringLocation(int elevation, int tile_num, int orientation)
 void mapNewMap()
 {
     mapSetElevation(0);
-    tileSetCenter(20100, TILE_SET_CENTER_FLAG_0x02);
+    tileSetCenter(20100, TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS);
     memset(&gMapTransition, 0, sizeof(gMapTransition));
     gMapHeader.enteringElevation = 0;
     gMapHeader.enteringRotation = 0;
@@ -778,7 +799,7 @@ int mapLoadById(int map)
     scriptSetFixedParam(gMapSid, map);
 
     char name[16];
-    if (wmMapIdxToName(map, name) == -1) {
+    if (wmMapIdxToName(map, name, sizeof(name)) == -1) {
         return -1;
     }
 
@@ -807,7 +828,12 @@ static int mapLoad(File* stream)
 
     int rc = 0;
 
-    windowFill(gIsoWindow, 0, 0, _scr_size.right - _scr_size.left + 1, _scr_size.bottom - _scr_size.top - 99, _colorTable[0]);
+    windowFill(gIsoWindow,
+        0,
+        0,
+        windowGetWidth(gIsoWindow),
+        windowGetHeight(gIsoWindow),
+        _colorTable[0]);
     windowRefresh(gIsoWindow);
     animationStop();
     scriptsDisable();
@@ -894,18 +920,18 @@ static int mapLoad(File* stream)
     }
 
     error = "Error setting tile center";
-    if (tileSetCenter(gEnteringTile, TILE_SET_CENTER_FLAG_0x02) != 0) {
+    if (tileSetCenter(gEnteringTile, TILE_SET_CENTER_FLAG_IGNORE_SCROLL_RESTRICTIONS) != 0) {
         goto err;
     }
 
-    lightSetLightLevel(LIGHT_LEVEL_MAX, false);
+    lightSetAmbientIntensity(LIGHT_INTENSITY_MAX, false);
     objectSetLocation(gDude, gCenterTile, gElevation, NULL);
     objectSetRotation(gDude, gEnteringRotation, NULL);
     gMapHeader.field_34 = wmMapMatchNameToIdx(gMapHeader.name);
 
     if ((gMapHeader.flags & 1) == 0) {
         char path[COMPAT_MAX_PATH];
-        sprintf(path, "maps\\%s", gMapHeader.name);
+        snprintf(path, sizeof(path), "maps\\%s", gMapHeader.name);
 
         char* extension = strstr(path, ".MAP");
         if (extension == NULL) {
@@ -932,7 +958,7 @@ static int mapLoad(File* stream)
         Object* object;
         int fid = buildFid(OBJ_TYPE_MISC, 12, 0, 0, 0);
         objectCreateWithFidPid(&object, fid, -1);
-        object->flags |= (OBJECT_LIGHT_THRU | OBJECT_TEMPORARY | OBJECT_HIDDEN);
+        object->flags |= (OBJECT_LIGHT_THRU | OBJECT_NO_SAVE | OBJECT_HIDDEN);
         objectSetLocation(object, 1, 0, NULL);
         object->sid = gMapSid;
         scriptSetFixedParam(gMapSid, (gMapHeader.flags & 1) == 0);
@@ -960,7 +986,7 @@ err:
 
     if (error != NULL) {
         char message[100]; // TODO: Size is probably wrong.
-        sprintf(message, "%s while loading map.", error);
+        snprintf(message, sizeof(message), "%s while loading map.", error);
         debugPrint(message);
         mapNewMap();
         rc = -1;
@@ -969,7 +995,7 @@ err:
     }
 
     _partyMemberRecoverLoad();
-    _intface_show();
+    interfaceBarShow();
     _proto_dude_update_gender();
     _map_place_dude_and_mouse();
     fileSetReadProgressHandler(NULL, 0);
@@ -1240,7 +1266,7 @@ int mapHandleTransition()
                 objectSetRotation(gDude, gMapTransition.rotation, NULL);
             }
 
-            if (tileSetCenter(gDude->tile, TILE_SET_CENTER_FLAG_0x01) == -1) {
+            if (tileSetCenter(gDude->tile, TILE_SET_CENTER_REFRESH_WINDOW) == -1) {
                 debugPrint("\nError: map: attempt to center out-of-bounds!");
             }
 
@@ -1296,12 +1322,12 @@ static int _map_save()
             rc = _map_save_file(stream);
             fileClose(stream);
         } else {
-            sprintf(temp, "Unable to open %s to write!", gMapHeader.name);
+            snprintf(temp, sizeof(temp), "Unable to open %s to write!", gMapHeader.name);
             debugPrint(temp);
         }
 
         if (rc == 0) {
-            sprintf(temp, "%s saved.", gMapHeader.name);
+            snprintf(temp, sizeof(temp), "%s saved.", gMapHeader.name);
             debugPrint(temp);
         }
     } else {
@@ -1340,7 +1366,7 @@ static int _map_save_file(File* stream)
             Object* object = objectFindFirstAtElevation(elevation);
             if (object != NULL) {
                 // TODO: Implementation is slightly different, check in debugger.
-                while (object != NULL && (object->flags & OBJECT_TEMPORARY)) {
+                while (object != NULL && (object->flags & OBJECT_NO_SAVE)) {
                     object = objectFindNextAtElevation();
                 }
 
@@ -1380,12 +1406,12 @@ static int _map_save_file(File* stream)
     char err[80];
 
     if (scriptSaveAll(stream) == -1) {
-        sprintf(err, "Error saving scripts in %s", gMapHeader.name);
+        snprintf(err, sizeof(err), "Error saving scripts in %s", gMapHeader.name);
         _win_msg(err, 80, 80, _colorTable[31744]);
     }
 
     if (objectSaveAll(stream) == -1) {
-        sprintf(err, "Error saving objects in %s", gMapHeader.name);
+        snprintf(err, sizeof(err), "Error saving objects in %s", gMapHeader.name);
         _win_msg(err, 80, 80, _colorTable[31744]);
     }
 
@@ -1477,36 +1503,44 @@ static void isoWindowRefreshRect(Rect* rect)
 // 0x483EE4
 static void isoWindowRefreshRectGame(Rect* rect)
 {
-    Rect clampedDirtyRect;
-    if (rectIntersection(rect, &gIsoWindowRect, &clampedDirtyRect) == -1) {
+    Rect rectToUpdate;
+    if (rectIntersection(rect, &gIsoWindowRect, &rectToUpdate) == -1) {
         return;
     }
 
-    tileRenderFloorsInRect(&clampedDirtyRect, gElevation);
-    _grid_render(&clampedDirtyRect, gElevation);
-    _obj_render_pre_roof(&clampedDirtyRect, gElevation);
-    tileRenderRoofsInRect(&clampedDirtyRect, gElevation);
-    _obj_render_post_roof(&clampedDirtyRect, gElevation);
+    // CE: Clear dirty rect to prevent most of the visual artifacts near map
+    // edges.
+    bufferFill(gIsoWindowBuffer + rectToUpdate.top * rectGetWidth(&gIsoWindowRect) + rectToUpdate.left,
+        rectGetWidth(&rectToUpdate),
+        rectGetHeight(&rectToUpdate),
+        rectGetWidth(&gIsoWindowRect),
+        0);
+
+    tileRenderFloorsInRect(&rectToUpdate, gElevation);
+    _obj_render_pre_roof(&rectToUpdate, gElevation);
+    tileRenderRoofsInRect(&rectToUpdate, gElevation);
+    _obj_render_post_roof(&rectToUpdate, gElevation);
 }
 
 // 0x483F44
 static void isoWindowRefreshRectMapper(Rect* rect)
 {
-    Rect clampedDirtyRect;
-    if (rectIntersection(rect, &gIsoWindowRect, &clampedDirtyRect) == -1) {
+    Rect rectToUpdate;
+    if (rectIntersection(rect, &gIsoWindowRect, &rectToUpdate) == -1) {
         return;
     }
 
-    bufferFill(gIsoWindowBuffer + clampedDirtyRect.top * (_scr_size.right - _scr_size.left + 1) + clampedDirtyRect.left,
-        clampedDirtyRect.right - clampedDirtyRect.left + 1,
-        clampedDirtyRect.bottom - clampedDirtyRect.top + 1,
-        _scr_size.right - _scr_size.left + 1,
+    bufferFill(gIsoWindowBuffer + rectToUpdate.top * rectGetWidth(&gIsoWindowRect) + rectToUpdate.left,
+        rectGetWidth(&rectToUpdate),
+        rectGetHeight(&rectToUpdate),
+        rectGetWidth(&gIsoWindowRect),
         0);
-    tileRenderFloorsInRect(&clampedDirtyRect, gElevation);
-    _grid_render(&clampedDirtyRect, gElevation);
-    _obj_render_pre_roof(&clampedDirtyRect, gElevation);
-    tileRenderRoofsInRect(&clampedDirtyRect, gElevation);
-    _obj_render_post_roof(&clampedDirtyRect, gElevation);
+
+    tileRenderFloorsInRect(&rectToUpdate, gElevation);
+    _grid_render(&rectToUpdate, gElevation);
+    _obj_render_pre_roof(&rectToUpdate, gElevation);
+    tileRenderRoofsInRect(&rectToUpdate, gElevation);
+    _obj_render_post_roof(&rectToUpdate, gElevation);
 }
 
 // NOTE: Inlined.
@@ -1521,6 +1555,8 @@ static int mapGlobalVariablesInit(int count)
         if (gMapGlobalVars == NULL) {
             return -1;
         }
+
+        gMapGlobalPointers.resize(count);
     }
 
     gMapGlobalVarsLength = count;
@@ -1536,6 +1572,8 @@ static void mapGlobalVariablesFree()
         gMapGlobalVars = NULL;
         gMapGlobalVarsLength = 0;
     }
+
+    gMapGlobalPointers.clear();
 }
 
 // NOTE: Inlined.
@@ -1612,7 +1650,7 @@ static void _map_place_dude_and_mouse()
         }
 
         objectSetLight(gDude, 4, 0x10000, 0);
-        gDude->flags |= OBJECT_TEMPORARY;
+        gDude->flags |= OBJECT_NO_SAVE;
 
         _dude_stand(gDude, gDude->rotation, gDude->fid);
         _partyMemberSyncPosition();

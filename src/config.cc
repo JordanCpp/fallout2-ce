@@ -248,12 +248,14 @@ bool configGetIntList(Config* config, const char* sectionKey, const char* key, i
         string = pch + 1;
     }
 
-    if (count <= 1) {
+    // SFALL: Fix getting last item in a list if the list has less than the
+    // requested number of values (for `chem_primary_desire`).
+    if (count > 0) {
         *arr = atoi(string);
-        return true;
+        count--;
     }
 
-    return false;
+    return count == 0;
 }
 
 // 0x42C160
@@ -287,7 +289,7 @@ bool configRead(Config* config, const char* filePath, bool isDb)
     } else {
         FILE* stream = compat_fopen(filePath, "rt");
         if (stream != NULL) {
-            while (fgets(string, sizeof(string), stream) != NULL) {
+            while (compat_fgets(string, sizeof(string), stream) != NULL) {
                 configParseLine(config, string);
             }
 
@@ -379,10 +381,25 @@ static bool configParseLine(Config* config, char* string)
         *pch = '\0';
     }
 
-    // Find opening bracket.
-    pch = strchr(string, '[');
-    if (pch != NULL) {
-        char* sectionKey = pch + 1;
+    // CE: Original implementation treats any line with brackets as section key.
+    // The problem can be seen when loading Olympus settings (ddraw.ini), which
+    // contains the following line:
+    //
+    //  ```ini
+    //  VersionString=Olympus 2207 [Complete].
+    //  ```
+    //
+    // It thinks that [Complete] is a start of new section, and puts remaining
+    // keys there.
+
+    // Skip leading whitespace.
+    while (isspace(*string)) {
+        string++;
+    }
+
+    // Check if it's a section key.
+    if (*string == '[') {
+        char* sectionKey = string + 1;
 
         // Find closing bracket.
         pch = strchr(sectionKey, ']');
@@ -522,7 +539,7 @@ bool configGetDouble(Config* config, const char* sectionKey, const char* key, do
 bool configSetDouble(Config* config, const char* sectionKey, const char* key, double value)
 {
     char stringValue[32];
-    sprintf(stringValue, "%.6f", value);
+    snprintf(stringValue, sizeof(stringValue), "%.6f", value);
 
     return configSetString(config, sectionKey, key, stringValue);
 }

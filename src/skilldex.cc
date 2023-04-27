@@ -109,6 +109,8 @@ static FrmImage _skilldexFrmImages[SKILLDEX_FRM_COUNT];
 // 0x4ABFD0
 int skilldexOpen()
 {
+    ScopedGameMode gm(GameMode::kSkilldex);
+
     if (skilldexWindowInit() == -1) {
         debugPrint("\n ** Error loading skilldex dialog data! **\n");
         return -1;
@@ -157,7 +159,7 @@ static int skilldexWindowInit()
     }
 
     char path[COMPAT_MAX_PATH];
-    sprintf(path, "%s%s", asc_5186C8, "skilldex.msg");
+    snprintf(path, sizeof(path), "%s%s", asc_5186C8, "skilldex.msg");
 
     if (!messageListLoad(&gSkilldexMessageList, path)) {
         return -1;
@@ -220,14 +222,14 @@ static int skilldexWindowInit()
     }
 
     // Maintain original position relative to centered interface bar.
-    int skilldexWindowX = (screenGetWidth() - 640) / 2 + 640 - _skilldexFrmImages[SKILLDEX_FRM_BACKGROUND].getWidth() - SKILLDEX_WINDOW_RIGHT_MARGIN;
+    int skilldexWindowX = (screenGetWidth() - gInterfaceBarWidth) / 2 + gInterfaceBarWidth - _skilldexFrmImages[SKILLDEX_FRM_BACKGROUND].getWidth() - SKILLDEX_WINDOW_RIGHT_MARGIN;
     int skilldexWindowY = screenGetHeight() - INTERFACE_BAR_HEIGHT - 1 - _skilldexFrmImages[SKILLDEX_FRM_BACKGROUND].getHeight() - SKILLDEX_WINDOW_BOTTOM_MARGIN;
     gSkilldexWindow = windowCreate(skilldexWindowX,
         skilldexWindowY,
         _skilldexFrmImages[SKILLDEX_FRM_BACKGROUND].getWidth(),
         _skilldexFrmImages[SKILLDEX_FRM_BACKGROUND].getHeight(),
         256,
-        WINDOW_FLAG_0x10 | WINDOW_FLAG_0x02);
+        WINDOW_MODAL | WINDOW_DONT_MOVE_TOP);
     if (gSkilldexWindow == -1) {
         for (int index = 0; index < SKILLDEX_SKILL_BUTTON_BUFFER_COUNT; index++) {
             internal_free(gSkilldexButtonsData[index]);
