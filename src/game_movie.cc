@@ -18,6 +18,7 @@
 #include "settings.h"
 #include "svga.h"
 #include "text_font.h"
+#include "touch.h"
 #include "window_manager.h"
 
 namespace fallout {
@@ -53,18 +54,18 @@ static const char* gMovieFileNames[MOVIE_COUNT] = {
 
 // 0x518DE4
 static const char* gMoviePaletteFilePaths[MOVIE_COUNT] = {
-    NULL,
+    nullptr,
     "art\\cuts\\introsub.pal",
     "art\\cuts\\eldersub.pal",
-    NULL,
+    nullptr,
     "art\\cuts\\artmrsub.pal",
-    NULL,
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
+    nullptr,
     "art\\cuts\\artmrsub.pal",
-    NULL,
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
+    nullptr,
     "art\\cuts\\artmrsub.pal",
     "art\\cuts\\artmrsub.pal",
     "art\\cuts\\artmrsub.pal",
@@ -209,7 +210,7 @@ int gameMoviePlay(int movie, int flags)
     int oldFont;
     if (subtitlesEnabled) {
         const char* subtitlesPaletteFilePath;
-        if (gMoviePaletteFilePaths[movie] != NULL) {
+        if (gMoviePaletteFilePaths[movie] != nullptr) {
             subtitlesPaletteFilePath = gMoviePaletteFilePaths[movie];
         } else {
             subtitlesPaletteFilePath = "art\\cuts\\subtitle.pal";
@@ -246,6 +247,11 @@ int gameMoviePlay(int movie, int flags)
     int buttons;
     do {
         if (!_moviePlaying() || _game_user_wants_to_quit || inputGetInput() != -1) {
+            break;
+        }
+
+        Gesture gesture;
+        if (touch_get_gesture(&gesture) && gesture.state == kEnded) {
             break;
         }
 
@@ -332,7 +338,7 @@ static char* gameMovieBuildSubtitlesFilePath(char* movieFilePath)
     char* path = movieFilePath;
 
     char* separator = strrchr(path, '\\');
-    if (separator != NULL) {
+    if (separator != nullptr) {
         path = separator + 1;
     }
 

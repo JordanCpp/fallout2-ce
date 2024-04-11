@@ -6,6 +6,7 @@
 #include "kb.h"
 #include "memory.h"
 #include "svga.h"
+#include "touch.h"
 #include "vcr.h"
 
 namespace fallout {
@@ -42,13 +43,13 @@ static unsigned char gMouseDefaultCursor[MOUSE_DEFAULT_CURSOR_SIZE] = {
 static int _mouse_idling = 0;
 
 // 0x51E294
-static unsigned char* gMouseCursorData = NULL;
+static unsigned char* gMouseCursorData = nullptr;
 
 // 0x51E298
-static unsigned char* _mouse_shape = NULL;
+static unsigned char* _mouse_shape = nullptr;
 
 // 0x51E29C
-static unsigned char* _mouse_fptr = NULL;
+static unsigned char* _mouse_fptr = nullptr;
 
 // 0x51E2A0
 static double gMouseSensitivity = 1.0;
@@ -132,7 +133,7 @@ int mouseInit()
 
     mousePrepareDefaultCursor();
 
-    if (mouseSetFrame(NULL, 0, 0, 0, 0, 0, 0) == -1) {
+    if (mouseSetFrame(nullptr, 0, 0, 0, 0, 0, 0) == -1) {
         return -1;
     }
 
@@ -155,14 +156,14 @@ void mouseFree()
 {
     mouseDeviceUnacquire();
 
-    if (gMouseCursorData != NULL) {
+    if (gMouseCursorData != nullptr) {
         internal_free(gMouseCursorData);
-        gMouseCursorData = NULL;
+        gMouseCursorData = nullptr;
     }
 
-    if (_mouse_fptr != NULL) {
+    if (_mouse_fptr != nullptr) {
         tickersRemove(_mouse_anim);
-        _mouse_fptr = NULL;
+        _mouse_fptr = nullptr;
     }
 }
 
@@ -196,7 +197,7 @@ int mouseSetFrame(unsigned char* a1, int width, int height, int pitch, int a5, i
     v8 = a6;
     v9 = a1;
 
-    if (a1 == NULL) {
+    if (a1 == nullptr) {
         // NOTE: Original code looks tail recursion optimization.
         return mouseSetFrame(gMouseDefaultCursor, MOUSE_DEFAULT_CURSOR_WIDTH, MOUSE_DEFAULT_CURSOR_HEIGHT, MOUSE_DEFAULT_CURSOR_WIDTH, 1, 1, _colorTable[0]);
     }
@@ -210,14 +211,14 @@ int mouseSetFrame(unsigned char* a1, int width, int height, int pitch, int a5, i
 
     if (width != gMouseCursorWidth || height != gMouseCursorHeight) {
         unsigned char* buf = (unsigned char*)internal_malloc(width * height);
-        if (buf == NULL) {
+        if (buf == nullptr) {
             if (!cursorWasHidden) {
                 mouseShowCursor();
             }
             return -1;
         }
 
-        if (gMouseCursorData != NULL) {
+        if (gMouseCursorData != nullptr) {
             internal_free(gMouseCursorData);
         }
 
@@ -232,7 +233,7 @@ int mouseSetFrame(unsigned char* a1, int width, int height, int pitch, int a5, i
 
     if (_mouse_fptr) {
         tickersRemove(_mouse_anim);
-        _mouse_fptr = NULL;
+        _mouse_fptr = nullptr;
     }
 
     v11 = _mouse_hotx - v7;
@@ -378,6 +379,54 @@ void _mouse_info()
     }
 
     if (_mouse_disabled) {
+        return;
+    }
+
+    Gesture gesture;
+    if (touch_get_gesture(&gesture)) {
+        static int prevx;
+        static int prevy;
+
+        switch (gesture.type) {
+        case kTap:
+            if (gesture.numberOfTouches == 1) {
+                _mouse_simulate_input(0, 0, MOUSE_STATE_LEFT_BUTTON_DOWN);
+            } else if (gesture.numberOfTouches == 2) {
+                _mouse_simulate_input(0, 0, MOUSE_STATE_RIGHT_BUTTON_DOWN);
+            }
+            break;
+        case kLongPress:
+        case kPan:
+            if (gesture.state == kBegan) {
+                prevx = gesture.x;
+                prevy = gesture.y;
+            }
+
+            if (gesture.type == kLongPress) {
+                if (gesture.numberOfTouches == 1) {
+                    _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_LEFT_BUTTON_DOWN);
+                } else if (gesture.numberOfTouches == 2) {
+                    _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, MOUSE_STATE_RIGHT_BUTTON_DOWN);
+                }
+            } else if (gesture.type == kPan) {
+                if (gesture.numberOfTouches == 1) {
+                    _mouse_simulate_input(gesture.x - prevx, gesture.y - prevy, 0);
+                } else if (gesture.numberOfTouches == 2) {
+                    gMouseWheelX = (prevx - gesture.x) / 2;
+                    gMouseWheelY = (gesture.y - prevy) / 2;
+
+                    if (gMouseWheelX != 0 || gMouseWheelY != 0) {
+                        gMouseEvent |= MOUSE_EVENT_WHEEL;
+                        _raw_buttons |= MOUSE_EVENT_WHEEL;
+                    }
+                }
+            }
+
+            prevx = gesture.x;
+            prevy = gesture.y;
+            break;
+        }
+
         return;
     }
 
@@ -661,7 +710,7 @@ void mouseGetPositionInWindow(int win, int* x, int* y)
     mouseGetPosition(x, y);
 
     Window* window = windowGetWindow(win);
-    if (window != NULL) {
+    if (window != nullptr) {
         *x -= window->rect.left;
         *y -= window->rect.top;
     }
@@ -670,7 +719,7 @@ void mouseGetPositionInWindow(int win, int* x, int* y)
 bool mouseHitTestInWindow(int win, int left, int top, int right, int bottom)
 {
     Window* window = windowGetWindow(win);
-    if (window != NULL) {
+    if (window != nullptr) {
         left += window->rect.left;
         top += window->rect.top;
         right += window->rect.left;
